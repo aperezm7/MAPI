@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import QueryRail from "./QueryRail";
-import MapView from "./MapView";
+import MapView, { type MapViewHandle } from "./MapView";
 import RecordPanel from "./RecordPanel";
-import { fetchIucn, fetchInat, fetchMap, planNl, requestGbifDownload, resolveQuery, suggestTaxon } from "./api";
-import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type PlaceCandidate, type TaxonCandidate } from "./types";
+import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestTaxon, triggerDownload } from "./api";
+import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate } from "./types";
 import { readQueryFromUrl, writeQueryToUrl } from "./urlState";
 
 export default function App() {
@@ -11,6 +11,7 @@ export default function App() {
   const [nlPrompt, setNlPrompt] = useState("show endangered amphibians in Costa Rica since 2015");
   const [nlDraft, setNlDraft] = useState<MapQuery | null>(null);
   const [nlNotes, setNlNotes] = useState<string[]>([]);
+  const [nlStatus, setNlStatus] = useState<NlStatus | null>(null);
   const [taxonCandidates, setTaxonCandidates] = useState<TaxonCandidate[]>([]);
   const [placeCandidates, setPlaceCandidates] = useState<PlaceCandidate[]>([]);
   const [taxonNeeds, setTaxonNeeds] = useState(false);
@@ -22,10 +23,17 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
+  const mapRef = useRef<MapViewHandle>(null);
 
   useEffect(() => {
     writeQueryToUrl(query);
   }, [query]);
+
+  useEffect(() => {
+    fetchNlStatus()
+      .then(setNlStatus)
+      .catch(() => setNlStatus(null));
+  }, []);
 
   const maxHist = useMemo(
     () => Math.max(1, ...(mapData?.histogram.map((h) => h.count) ?? [1])),
@@ -128,7 +136,8 @@ export default function App() {
     try {
       const planned = await planNl(nlPrompt);
       setNlDraft(planned.resolve.query);
-      setNlNotes(planned.notes);
+      const origin = [planned.provider, planned.model].filter(Boolean).join(" · ");
+      setNlNotes(origin ? [origin, ...planned.notes] : planned.notes);
       await applyResolved(planned.resolve.query, planned.resolve);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Planner unavailable");
@@ -152,12 +161,35 @@ export default function App() {
   function exportSample() {
     if (!mapData?.sample) return;
     const blob = new Blob([JSON.stringify(mapData.sample, null, 2)], { type: "application/geo+json" });
-    const url = URL.createObjectURL(blob);
+    triggerDownload(blob, "mapi-sample.geojson");
+  }
+
+  function exportBoundary() {
+    if (!mapData?.boundary?.features.length) return;
+    const blob = new Blob([JSON.stringify(mapData.boundary, null, 2)], { type: "application/geo+json" });
+    triggerDownload(blob, "mapi-boundary.geojson");
+  }
+
+  function exportPng() {
+    const dataUrl = mapRef.current?.exportPng();
+    if (!dataUrl) {
+      setDownloadMsg("Map is not ready to export yet.");
+      return;
+    }
     const link = document.createElement("a");
-    link.href = url;
-    link.download = "mapi-sample.geojson";
+    link.href = dataUrl;
+    link.download = "mapi-map.png";
     link.click();
-    URL.revokeObjectURL(url);
+  }
+
+  async function exportQgis() {
+    setDownloadMsg(null);
+    try {
+      await downloadQgisPackage(query);
+      setDownloadMsg("Downloaded a QGIS package (GeoJSON + PyQGIS loader). Open it in QGIS Desktop.");
+    } catch (err) {
+      setDownloadMsg(err instanceof Error ? err.message : "QGIS export failed");
+    }
   }
 
   async function onDownload() {
@@ -188,9 +220,10 @@ export default function App() {
         onPlan={() => void onPlan()}
         onConfirmNl={() => nlDraft && void compile(nlDraft)}
         hasNlDraft={Boolean(nlDraft)}
+        nlStatus={nlStatus}
       />
       <main className="stage">
-        <MapView mapData={mapData} inat={inat} onSelect={(f) => void onSelectFeature(f)} />
+        <MapView ref={mapRef} mapData={mapData} inat={inat} onSelect={(f) => void onSelectFeature(f)} />
         <div className="hud">
           {error ? <div className="warn">{error}</div> : null}
           {!mapData && !error ? (
@@ -251,6 +284,15 @@ export default function App() {
               <div className="actions">
                 <button type="button" className="secondary" onClick={exportSample} disabled={!mapData.sample.features.length}>
                   Export sample GeoJSON
+                </button>
+                <button type="button" className="secondary" onClick={exportBoundary} disabled={!mapData.boundary?.features.length}>
+                  Export boundary GeoJSON
+                </button>
+                <button type="button" className="secondary" onClick={exportPng}>
+                  Export map PNG
+                </button>
+                <button type="button" className="secondary" onClick={() => void exportQgis()}>
+                  Export QGIS package
                 </button>
                 <button type="button" className="secondary" onClick={() => void onDownload()}>
                   Request GBIF download

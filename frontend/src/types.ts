@@ -75,6 +75,8 @@ export interface MapResponse {
   sample: GeoJSON.FeatureCollection;
   sampleTruncated: boolean;
   sampleOmittedSensitive: number;
+  boundary?: GeoJSON.FeatureCollection | null;
+  boundaryAttribution?: string | null;
   histogram: YearCount[];
   attribution: string[];
   warnings: string[];
@@ -118,6 +120,15 @@ export interface NlPlanResponse {
   };
   notes: string[];
   model?: string | null;
+  provider?: string | null;
+}
+
+export interface NlStatus {
+  available: boolean;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  message?: string | null;
 }
 
 export const IUCN_OPTIONS: { code: IucnCode; label: string }[] = [

@@ -16,6 +16,7 @@ from app.compile import (
 )
 from app.models import MapQuery, MapResponse, TileSpec, YearCount
 from app.services import gbif
+from app.services.shapes import shape_for_place
 
 
 def _histogram_from_records(records: list[dict[str, Any]]) -> list[YearCount]:
@@ -32,15 +33,30 @@ def _histogram_from_records(records: list[dict[str, Any]]) -> list[YearCount]:
     return [YearCount(year=year, count=counts[year]) for year in sorted(counts)]
 
 
+async def _boundary_fields(
+    client: httpx.AsyncClient, query: MapQuery, warnings: list[str]
+) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        boundary, attribution = await shape_for_place(client, query.place)
+    except Exception:
+        boundary, attribution = None, None
+    if query.place and (query.place.iso2 or query.place.bbox) and not boundary:
+        warnings.append("Place outline unavailable — map still uses the GBIF country or bbox filter.")
+    return boundary, attribution
+
+
 async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse:
     warnings: list[str] = []
     params = occurrence_params(query)
     if "taxonKey" not in params and "country" not in params:
         warnings.append("Add a taxon or country before mapping — unbounded queries are rejected.")
+        boundary, boundary_attr = await _boundary_fields(client, query, warnings)
         return MapResponse(
             query=query,
             count=0,
             sample=empty_feature_collection(),
+            boundary=boundary,
+            boundaryAttribution=boundary_attr,
             attribution=[gbif_attribution()],
             warnings=warnings,
             mode=query.map.mode,
@@ -89,6 +105,9 @@ async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse
     span = year_range(query)
     if span:
         attribution.append(f"Filtered to years {span[0]}–{span[1]}.")
+    boundary, boundary_attr = await _boundary_fields(client, query, warnings)
+    if boundary_attr:
+        attribution.append(boundary_attr)
 
     return MapResponse(
         query=query,
@@ -98,6 +117,8 @@ async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse
         sample={"type": "FeatureCollection", "features": sample_features},
         sampleTruncated=truncated,
         sampleOmittedSensitive=omitted_sensitive,
+        boundary=boundary,
+        boundaryAttribution=boundary_attr,
         histogram=histogram,
         attribution=attribution,
         warnings=warnings,

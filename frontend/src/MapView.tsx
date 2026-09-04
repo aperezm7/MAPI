@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { InatOverlay, MapResponse } from "./types";
@@ -23,23 +23,55 @@ type Props = {
   onSelect: (feature: GeoJSON.Feature | null) => void;
 };
 
-function fitSample(map: maplibregl.Map, collection: GeoJSON.FeatureCollection) {
-  const coords = collection.features
-    .map((f) => (f.geometry?.type === "Point" ? (f.geometry as GeoJSON.Point).coordinates : null))
-    .filter((c): c is number[] => Array.isArray(c) && c.length >= 2);
-  if (coords.length === 0) return;
-  const bounds = coords.reduce(
-    (b, c) => b.extend(c as [number, number]),
-    new maplibregl.LngLatBounds(coords[0] as [number, number], coords[0] as [number, number]),
-  );
-  map.fitBounds(bounds, { padding: 60, maxZoom: 8, duration: 700 });
+export type MapViewHandle = {
+  exportPng: () => string | null;
+};
+
+function collectPositions(geom: GeoJSON.Geometry | null | undefined): number[][] {
+  if (!geom) return [];
+  switch (geom.type) {
+    case "Point":
+      return [geom.coordinates];
+    case "MultiPoint":
+    case "LineString":
+      return geom.coordinates;
+    case "MultiLineString":
+    case "Polygon":
+      return geom.coordinates.flat();
+    case "MultiPolygon":
+      return geom.coordinates.flat(2);
+    case "GeometryCollection":
+      return geom.geometries.flatMap(collectPositions);
+    default:
+      return [];
+  }
 }
 
-export default function MapView({ mapData, inat, onSelect }: Props) {
+function fitCollection(map: maplibregl.Map, collection: GeoJSON.FeatureCollection, maxZoom: number) {
+  const coords = collection.features.flatMap((feature) => collectPositions(feature.geometry));
+  const usable = coords.filter((c) => Array.isArray(c) && c.length >= 2);
+  if (usable.length === 0) return;
+  const bounds = usable.reduce(
+    (b, c) => b.extend(c as [number, number]),
+    new maplibregl.LngLatBounds(usable[0] as [number, number], usable[0] as [number, number]),
+  );
+  map.fitBounds(bounds, { padding: 60, maxZoom, duration: 700 });
+}
+
+const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, inat, onSelect }, ref) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+
+  useImperativeHandle(ref, () => ({
+    exportPng: () => {
+      const map = mapRef.current;
+      if (!map) return null;
+      map.triggerRepaint();
+      return map.getCanvas().toDataURL("image/png");
+    },
+  }));
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -49,10 +81,34 @@ export default function MapView({ mapData, inat, onSelect }: Props) {
       center: [-84.07, 9.93],
       zoom: 6,
       attributionControl: { compact: true },
+      canvasContextAttributes: { preserveDrawingBuffer: true },
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     mapRef.current = map;
     map.on("load", () => {
+      map.addSource("boundary", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "boundary-fill",
+        type: "fill",
+        source: "boundary",
+        paint: {
+          "fill-color": "#1f5f5b",
+          "fill-opacity": 0.1,
+        },
+      });
+      map.addLayer({
+        id: "boundary-line",
+        type: "line",
+        source: "boundary",
+        paint: {
+          "line-color": "#1f5f5b",
+          "line-width": 1.8,
+          "line-opacity": 0.9,
+        },
+      });
       map.addSource("gbif-sample", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -163,16 +219,25 @@ export default function MapView({ mapData, inat, onSelect }: Props) {
             source: "gbif-tiles",
             paint: { "raster-opacity": mapData.style === "points" ? 0.85 : 0.92 },
           },
-          "gbif-clusters",
+          map.getLayer("boundary-fill") ? "boundary-fill" : "gbif-clusters",
         );
       }
+      const boundarySource = map.getSource("boundary") as maplibregl.GeoJSONSource | undefined;
+      const boundary = mapData?.boundary ?? { type: "FeatureCollection", features: [] };
+      boundarySource?.setData(boundary);
       const sampleSource = map.getSource("gbif-sample") as maplibregl.GeoJSONSource | undefined;
       sampleSource?.setData(mapData?.sample ?? { type: "FeatureCollection", features: [] });
-      const hidePoints = mapData?.style === "heat" && (map.getZoom() < 7);
-      map.setLayoutProperty("gbif-points", "visibility", hidePoints ? "none" : "visible");
-      map.setLayoutProperty("gbif-clusters", "visibility", hidePoints ? "none" : "visible");
+      const hidePoints = mapData?.style === "heat" && map.getZoom() < 7;
+      if (map.getLayer("gbif-points")) {
+        map.setLayoutProperty("gbif-points", "visibility", hidePoints ? "none" : "visible");
+      }
+      if (map.getLayer("gbif-clusters")) {
+        map.setLayoutProperty("gbif-clusters", "visibility", hidePoints ? "none" : "visible");
+      }
       if (mapData?.sample?.features?.length) {
-        fitSample(map, mapData.sample);
+        fitCollection(map, mapData.sample, 8);
+      } else if (boundary.features?.length) {
+        fitCollection(map, boundary, 7);
       }
     };
 
@@ -198,4 +263,6 @@ export default function MapView({ mapData, inat, onSelect }: Props) {
   }, [inat]);
 
   return <div className="map" ref={containerRef} />;
-}
+});
+
+export default MapView;

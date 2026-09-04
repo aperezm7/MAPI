@@ -1,5 +1,5 @@
 import { FormEvent, useMemo } from "react";
-import type { IucnCode, MapQuery, PlaceCandidate, TaxonCandidate } from "./types";
+import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
 import { IUCN_OPTIONS, JAGUAR_PRESET, NORTHSTAR } from "./types";
 
 type Props = {
@@ -18,6 +18,7 @@ type Props = {
   onPlan: () => void;
   onConfirmNl: () => void;
   hasNlDraft: boolean;
+  nlStatus: NlStatus | null;
 };
 
 export default function QueryRail({
@@ -36,6 +37,7 @@ export default function QueryRail({
   onPlan,
   onConfirmNl,
   hasNlDraft,
+  nlStatus,
 }: Props) {
   const selectedIucn = query.conservation?.iucn ?? [];
   const resolved = useMemo(() => {
@@ -82,19 +84,41 @@ export default function QueryRail({
 
       <section className="card">
         <h2>Natural language</h2>
+        {nlStatus ? (
+          <div className={nlStatus.available ? "ok" : "empty"}>
+            {nlStatus.available
+              ? `${nlStatus.provider} · ${nlStatus.model}`
+              : nlStatus.message || "Planner unavailable"}
+          </div>
+        ) : null}
         <textarea
           value={nlPrompt}
           onChange={(e) => setNlPrompt(e.target.value)}
           placeholder="show endangered amphibians in Costa Rica since 2015"
         />
         <div className="actions">
-          <button type="button" className="secondary" onClick={onPlan} disabled={loading}>
-            Plan query
+          <button
+            type="button"
+            className={`secondary${loading ? " loading" : ""}`}
+            onClick={onPlan}
+            disabled={loading}
+            aria-busy={loading}
+          >
+            {loading ? "Planning…" : "Plan query"}
           </button>
-          <button type="button" className="primary" onClick={onConfirmNl} disabled={!hasNlDraft || loading}>
-            Confirm & map
+          <button
+            type="button"
+            className={`primary${loading ? " loading" : ""}`}
+            onClick={onConfirmNl}
+            disabled={!hasNlDraft || loading}
+            title={!hasNlDraft ? "Run Plan query first" : "Confirm this query and draw the map"}
+          >
+            {hasNlDraft ? "Confirm & map" : "Plan query first"}
           </button>
         </div>
+        {!hasNlDraft && !loading ? (
+          <div className="footer-attr">First plan the sentence with Gemma 4, then confirm the resolved query.</div>
+        ) : null}
         {nlNotes.map((note) => (
           <div className="empty" key={note}>
             {note}

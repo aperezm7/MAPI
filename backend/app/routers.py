@@ -1,13 +1,16 @@
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 
 from app.models import (
     DownloadRequest,
     IucnStatusResponse,
     MapQuery,
     NlPlanRequest,
+    NlStatusResponse,
 )
 from app.services import downloads, inat, iucn, llm
 from app.services.mapping import compile_map
+from app.services.qgis_export import build_qgis_zip, package_slug
 from app.services.resolve import load_countries, resolve_query, resolve_taxon
 from app.models import TaxonQuery
 
@@ -90,6 +93,11 @@ async def species_iucn(request: Request, name: str) -> IucnStatusResponse:
     return await iucn.iucn_status(client, name)
 
 
+@router.get("/v1/nl/status", response_model=NlStatusResponse)
+async def nl_status() -> NlStatusResponse:
+    return llm.planner_status()
+
+
 @router.post("/v1/nl/plan")
 async def nl_plan(request: Request, body: NlPlanRequest):
     client = request.app.state.http
@@ -105,4 +113,20 @@ async def gbif_download(request: Request, body: DownloadRequest):
     resolved = await resolve_query(client, body.query)
     return await downloads.create_download(
         client, DownloadRequest(query=resolved.query, format=body.format)
+    )
+
+
+@router.post("/v1/export/qgis")
+async def export_qgis(request: Request, query: MapQuery):
+    client = request.app.state.http
+    resolved = await resolve_query(client, query)
+    if resolved.taxonNeedsDisambiguation and (not query.taxon or not query.taxon.gbifKey):
+        raise HTTPException(status_code=409, detail="Pick a taxon match before exporting.")
+    mapped = await compile_map(client, resolved.query)
+    payload = build_qgis_zip(mapped)
+    filename = f"mapi-{package_slug(mapped.query)}.zip"
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

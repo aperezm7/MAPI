@@ -1,4 +1,4 @@
-import type { IucnStatus, InatOverlay, MapQuery, MapResponse, NlPlanResponse, PlaceCandidate, TaxonCandidate } from "./types";
+import type { IucnStatus, InatOverlay, MapQuery, MapResponse, NlPlanResponse, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
 
 async function parse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
@@ -62,6 +62,11 @@ export async function fetchIucn(name: string): Promise<IucnStatus> {
   return parse<IucnStatus>(response);
 }
 
+export async function fetchNlStatus(): Promise<NlStatus> {
+  const response = await fetch("/v1/nl/status");
+  return parse<NlStatus>(response);
+}
+
 export async function planNl(prompt: string): Promise<NlPlanResponse> {
   const response = await fetch("/v1/nl/plan", {
     method: "POST",
@@ -79,3 +84,30 @@ export async function requestGbifDownload(query: MapQuery): Promise<{ available:
   });
   return parse(response);
 }
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadQgisPackage(query: MapQuery): Promise<void> {
+  const response = await fetch("/v1/export/qgis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(query),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail || response.statusText);
+  }
+  const blob = await response.blob();
+  const header = response.headers.get("Content-Disposition") || "";
+  const match = header.match(/filename="([^"]+)"/);
+  triggerDownload(blob, match?.[1] || "mapi-qgis.zip");
+}
+
+export { triggerDownload };

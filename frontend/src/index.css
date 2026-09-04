@@ -171,6 +171,10 @@ button.linkish {
 
 button:disabled {
   opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.loading:disabled {
   cursor: wait;
 }
 
@@ -254,7 +258,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 280px;
+  max-width: 320px;
   z-index: 2;
   max-height: calc(100% - 24px);
   overflow: auto;

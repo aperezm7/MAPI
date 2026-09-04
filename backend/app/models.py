@@ -119,6 +119,8 @@ class MapResponse(BaseModel):
     sample: dict[str, Any]
     sampleTruncated: bool = False
     sampleOmittedSensitive: int = 0
+    boundary: dict[str, Any] | None = None
+    boundaryAttribution: str | None = None
     histogram: list[YearCount] = Field(default_factory=list)
     attribution: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -135,6 +137,15 @@ class NlPlanResponse(BaseModel):
     resolve: ResolveResponse
     notes: list[str] = Field(default_factory=list)
     model: str | None = None
+    provider: str | None = None
+
+
+class NlStatusResponse(BaseModel):
+    available: bool
+    provider: str
+    model: str
+    baseUrl: str
+    message: str | None = None
 
 
 class IucnStatusResponse(BaseModel):
