@@ -154,18 +154,24 @@ async def _chat(
         payload["tool_choice"] = "auto"
     if settings.provider() == "ollama":
         payload["think"] = False
-    response = await client.post(
-        url,
-        headers={
-            "Authorization": f"Bearer {settings.llm_api_key()}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=180.0,
-    )
+    try:
+        response = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {settings.llm_api_key()}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=180.0,
+        )
+    except httpx.HTTPError as exc:
+        raise LlmError(f"LLM unreachable ({settings.openai_base_url}): {exc}") from exc
     if response.status_code >= 400:
         raise LlmError(f"LLM HTTP {response.status_code}: {response.text[:400]}")
-    return response.json()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise LlmError("LLM returned a non-JSON body.") from exc
 
 
 async def _run_tool(client: httpx.AsyncClient, name: str, arguments: dict[str, Any]) -> Any:

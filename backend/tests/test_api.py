@@ -5,6 +5,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from httpx import Response
+import httpx
 
 from app.cache import reset_cache_for_tests
 from app.config import get_settings
@@ -58,6 +59,28 @@ def test_health(client: TestClient):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@respx.mock
+def test_taxon_suggest_uses_rank_hint(client: TestClient):
+    respx.get("https://api.gbif.org/v1/species/match").mock(
+        return_value=Response(200, json={"confidence": 100, "matchType": "NONE"})
+    )
+    respx.get("https://api.gbif.org/v1/species/suggest").mock(
+        return_value=Response(
+            200,
+            json=[
+                {"key": 8001309, "canonicalName": "Amphibia", "rank": "GENUS"},
+                {"key": 131, "canonicalName": "Amphibia", "rank": "CLASS", "kingdom": "Animalia"},
+            ],
+        )
+    )
+    response = client.get("/v1/taxon/suggest", params={"q": "amphibians", "rankHint": "class"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query"]["gbifKey"] == 131
+    assert body["query"]["rank"] == "CLASS"
+    assert body["needsDisambiguation"] is False
 
 
 @respx.mock
@@ -164,6 +187,14 @@ def test_iucn_without_token(client: TestClient, monkeypatch: pytest.MonkeyPatch)
     body = response.json()
     assert body["available"] is False
     assert "token" in (body["message"] or "").lower()
+
+
+@respx.mock
+def test_nl_plan_maps_connection_errors_to_503(client: TestClient):
+    respx.post("http://127.0.0.1:11434/v1/chat/completions").mock(side_effect=httpx.ConnectError("down"))
+    response = client.post("/v1/nl/plan", json={"prompt": "show jaguars in Costa Rica"})
+    assert response.status_code == 503
+    assert "unreachable" in response.json()["detail"].lower()
 
 
 def test_nl_without_key(client: TestClient, monkeypatch: pytest.MonkeyPatch):

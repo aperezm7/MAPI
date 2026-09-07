@@ -95,6 +95,10 @@ def use_adhoc_tiles(query: MapQuery) -> bool:
 def choose_mode(query: MapQuery, count: int) -> str:
     if query.map.mode != "tiles_plus_sample":
         return query.map.mode
+    # Hex/heat only exist as GBIF raster styles. Keep tiles so the UI style chips
+    # are not silently ignored when the sample is small enough for "points".
+    if query.map.style in {"hex", "heat"}:
+        return "tiles_plus_sample"
     rank = (query.taxon.rank or "").upper() if query.taxon else ""
     high_rank = rank in {"KINGDOM", "PHYLUM", "CLASS", "ORDER", "FAMILY"}
     if high_rank or count > 8000:

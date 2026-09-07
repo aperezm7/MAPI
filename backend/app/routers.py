@@ -30,11 +30,15 @@ async def countries(request: Request) -> dict:
 
 
 @router.get("/v1/taxon/suggest")
-async def taxon_suggest(request: Request, q: str, limit: int = 12) -> dict:
+async def taxon_suggest(
+    request: Request, q: str, limit: int = 12, rankHint: str | None = None
+) -> dict:
     client = request.app.state.http
     if not q.strip():
         return {"candidates": []}
-    taxon, candidates, needs, warnings = await resolve_taxon(client, TaxonQuery(q=q.strip()))
+    taxon, candidates, needs, warnings = await resolve_taxon(
+        client, TaxonQuery(q=q.strip(), rankHint=rankHint)
+    )
     return {
         "query": taxon.model_dump() if taxon else None,
         "candidates": [c.model_dump(by_alias=True) for c in candidates[:limit]],

@@ -132,12 +132,15 @@ export interface NlStatus {
 }
 
 export const IUCN_OPTIONS: { code: IucnCode; label: string }[] = [
+  { code: "EX", label: "Extinct" },
+  { code: "EW", label: "Extinct in the wild" },
   { code: "CR", label: "Critically endangered" },
   { code: "EN", label: "Endangered" },
   { code: "VU", label: "Vulnerable" },
   { code: "NT", label: "Near threatened" },
   { code: "LC", label: "Least concern" },
   { code: "DD", label: "Data deficient" },
+  { code: "NE", label: "Not evaluated" },
 ];
 
 export const NORTHSTAR: MapQuery = {
