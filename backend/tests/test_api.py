@@ -5,6 +5,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from httpx import Response
+import httpx
 
 from app.cache import reset_cache_for_tests
 from app.config import get_settings
@@ -186,6 +187,14 @@ def test_iucn_without_token(client: TestClient, monkeypatch: pytest.MonkeyPatch)
     body = response.json()
     assert body["available"] is False
     assert "token" in (body["message"] or "").lower()
+
+
+@respx.mock
+def test_nl_plan_maps_connection_errors_to_503(client: TestClient):
+    respx.post("http://127.0.0.1:11434/v1/chat/completions").mock(side_effect=httpx.ConnectError("down"))
+    response = client.post("/v1/nl/plan", json={"prompt": "show jaguars in Costa Rica"})
+    assert response.status_code == 503
+    assert "unreachable" in response.json()["detail"].lower()
 
 
 def test_nl_without_key(client: TestClient, monkeypatch: pytest.MonkeyPatch):

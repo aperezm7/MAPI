@@ -135,7 +135,7 @@ No dead `onClick` handlers were found. The closest “dead” pieces were: unuse
 
 1. **Unauthenticated mutating API.** Anyone who can reach the server can drive GBIF/iNat/IUCN/LLM traffic and, if `GBIF_USERNAME`/`GBIF_PASSWORD` are set, **queue occurrence downloads billed to that GBIF account**. Fine for local research; not fine on a public host.
 2. **No inbound rate limiting.** Outbound spacing (GBIF 80ms, iNat 150ms, …) does not stop a client from stacking `/v1/map` and `/v1/nl/plan` (LLM timeout 180s).
-3. **Planner status leaks `baseUrl`.** Harmless for local Ollama; slightly useful recon for a remote provider.
+3. **Planner status leaks `baseUrl`.** Harmless for local Ollama; slightly useful recon for a remote provider. When Ollama is down, `/v1/nl/plan` now returns **503** (it previously 500'd on `httpx.ConnectError`).
 
 ### P2 — bugs fixed in this change
 
@@ -149,42 +149,60 @@ No dead `onClick` handlers were found. The closest “dead” pieces were: unuse
 11. **Heat style point visibility** only ran when `mapData` changed, not on zoom.
 12. **IUCN chips omitted EX/EW/NE** though the API accepts them.
 13. **QGIS / GBIF buttons** had no busy or disabled state (double-submit).
+14. **`POST /v1/nl/plan` returned 500** when Ollama was unreachable (`httpx.ConnectError` not mapped to `LlmError`).
 
 ### P3 — remaining product / contract issues (documented)
 
-14. **`map.sampleLimit` (up to 10000) is not honored.** Compiler fetches one page of `min(sampleLimit, 300)`. `occurrence_pages()` exists and is unused. Likely intentional (GBIF hang comments) but the schema over-promises.
-15. **`place.kind` `gadm` is unimplemented.** Resolve always emits `kind="country"`. `bbox` works in the compiler/shapes but has no UI.
-16. **Mode `tiles` / `points` is not in the UI.** Auto-chosen except when hex/heat force tiles.
-17. **Year sliders vs histogram.** Histogram is the inspectable sample (warning text exists). Applying a window from sample years can hide the rest of the GBIF series.
-18. **Style / iNat / IUCN chips do not recompile** until Draw map — easy to think the map already changed.
-19. **QGIS export vs GeoJSON export disagree** after HUD edits: GeoJSON is the last compiled `mapData`; QGIS recompiles the live form `query`.
-20. **Place disambiguation does not block mapping** (unlike taxon). “United” can auto-pick the first GBIF hit.
-21. **Planner `available: true` for Ollama** even when `ollama serve` is down — failure only on Plan query (503).
-22. **In-memory cache** never evicts expired keys until read; unique queries grow RAM.
-23. **`GET /v1/countries` unused by UI** after adding Resolve place (resolve loads the same list server-side).
-24. **OSM raster tiles** may violate OSM tile usage expectations under load and may taint PNG export — consider a CORS-friendly basemap if PNG is a first-class feature.
-25. **No frontend automated tests** (only `tsc --noEmit` + Vite build).
+15. **`map.sampleLimit` (up to 10000) is not honored.** Compiler fetches one page of `min(sampleLimit, 300)`. `occurrence_pages()` exists and is unused. Likely intentional (GBIF hang comments) but the schema over-promises.
+16. **`place.kind` `gadm` is unimplemented.** Resolve always emits `kind="country"`. `bbox` works in the compiler/shapes but has no UI.
+17. **Mode `tiles` / `points` is not in the UI.** Auto-chosen except when hex/heat force tiles.
+18. **Year sliders vs histogram.** Histogram is the inspectable sample (warning text exists). Applying a window from sample years can hide the rest of the GBIF series.
+19. **Style / iNat / IUCN chips do not recompile** until Draw map — easy to think the map already changed.
+20. **QGIS export vs GeoJSON export disagree** after HUD edits: GeoJSON is the last compiled `mapData`; QGIS recompiles the live form `query`.
+21. **Place disambiguation does not block mapping** (unlike taxon). “United” can auto-pick the first GBIF hit.
+22. **Planner `available: true` for Ollama** even when `ollama serve` is down — failure only on Plan query (503).
+23. **In-memory cache** never evicts expired keys until read; unique queries grow RAM.
+24. **`GET /v1/countries` unused by UI** after adding Resolve place (resolve loads the same list server-side).
+25. **OSM raster tiles** may violate OSM tile usage expectations under load and may taint PNG export — consider a CORS-friendly basemap if PNG is a first-class feature.
+26. **No frontend automated tests** (only `tsc --noEmit` + Vite build).
 
 ---
 
-## 5. What cannot be fully verified without a running server
+## 5. Live verification performed in this audit
+
+Against a local `uvicorn` + Vite stack with live GBIF/geoBoundaries (no Ollama, no IUCN token, no GBIF download account):
+
+| Check | Result |
+| --- | --- |
+| `GET /health`, Vite `/v1` proxy | 200 |
+| `GET /v1/taxon/suggest?q=amphibians&rankHint=class` | CLASS 131 |
+| `POST /v1/map` jaguar CR hex, 28 records in 2024 | `tiles_plus_sample` + tile URL (would have been `points` + no tile before the fix) |
+| Same query `style: points` | `mode: points`, no tile |
+| `POST /v1/nl/plan` with Ollama down | **503** `LLM unreachable…` (was 500) |
+| Browser: Plan query | HUD shows the same unreachable message |
+| Browser: jaguar example → Resolve taxon/place → Draw map | 5,659 records, clusters, HUD exports |
+| Browser: hex chip → Draw map | HUD `tiles_plus_sample · hex` |
+| Browser: zoom past clusters → click point | Selected record + Open on GBIF |
+| Browser: GeoJSON / PNG / QGIS exports | Files downloaded; QGIS HUD confirmation |
+| Browser: Request GBIF download | “Set GBIF_USERNAME and GBIF_PASSWORD…” |
+| PNG canvas taint | **Did not reproduce** in this Chrome/MapLibre 5 session (try/catch still in place) |
+
+Point inspect is easy to miss at country zoom: clicks hit **clusters** (expand zoom), not `gbif-points`. That is clustering, not a dead handler.
+
+## 6. What still cannot be verified without extra services
 
 | Need | Why |
 | --- | --- |
-| Live GBIF | Taxon match quality, occurrence counts, tile URLs, download queue |
-| geoBoundaries | Country outline fetch + license attribution |
-| iNaturalist | Overlay photos, place autocomplete accuracy |
-| IUCN token | Real category/citation vs “token not configured” |
-| Ollama + `gemma4` (or remote key) | Plan query JSON/tool-call path, 180s timeout, 503 copy |
-| Browser MapLibre | Cluster click, heat-on-zoom, OSM tile load, PNG taint, fitBounds |
+| iNaturalist overlay | Checkbox not exercised in the browser pass |
+| IUCN v4 token | Record card correctly showed “token is not configured” |
+| Ollama + `gemma4` (or remote key) | Planner JSON/tool-call success path (failure path **was** tested) |
 | Docker compose | nginx `/v1/` proxy, Redis cache, `host.docker.internal` Ollama |
 | GBIF account | Successful `available: true` download key |
+| Heat style at zoom | Heat chip not clicked in the browser pass (hex was) |
 
-Backend unit/API tests mock GBIF/geoBoundaries and cover health, blocked map, jaguar map, IUCN-without-token, NL-without-key, download-without-account, QGIS zip, rankHint suggest, and hex/heat mode. They do **not** prove live tiles or the React map.
+Backend tests (47 passed) mock GBIF/geoBoundaries. Live GBIF map/tiles, geoBoundaries outline, Vite proxy, and the React jaguar flow were exercised separately as in §5.
 
----
-
-## 6. Fixes in this change
+## 7. Fixes in this change
 
 - Pass `rankHint` through `GET /v1/taxon/suggest` and the Resolve taxon button.
 - Keep GBIF tiles when the user picked hex or heat.
@@ -194,15 +212,16 @@ Backend unit/API tests mock GBIF/geoBoundaries and cover health, blocked map, ja
 - Resolve place button.
 - PNG export try/catch; QGIS/GBIF busy state; Apply year window disabled while compiling.
 - Heat sample layers follow zoom; IUCN chips include EX/EW/NE.
-- Tests for rankHint suggest and hex/heat `choose_mode`.
+- Tests for rankHint suggest, hex/heat `choose_mode`, and planner 503 on connection failure.
+- Map Ollama/OpenAI connection failures to HTTP 503 instead of an unhandled 500.
 
 ---
 
-## 7. Recommended next steps
+## 8. Recommended next steps
 
 1. Merge PR #1 (`cursor/species-occurrence-maps`) so `main` actually contains the app; then merge this audit branch into it.
 2. Before any public deploy: auth or network isolation for `/v1/nl/plan` and `/v1/downloads/gbif`; inbound rate limits; do not put GBIF passwords on an open origin.
-3. Manual browser pass on jaguar + north-star examples (Draw map, style chips, iNat, exports, planner if Ollama is up).
+3. Optional: iNaturalist overlay + heat style + a successful Ollama plan (this audit covered jaguar draw/hex/exports/planner-down).
 4. Decide whether `sampleLimit` should paginate (use `occurrence_pages`) or the schema should cap at 300.
 5. Either implement `gadm`/bbox UI or drop those `kind` values from the public schema.
 6. Add a few frontend tests around `urlState` and `errorMessage`.
