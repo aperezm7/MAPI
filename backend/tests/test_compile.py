@@ -130,6 +130,20 @@ def test_choose_mode_small_species_points():
     assert choose_mode(query, 400) == "points"
 
 
+def test_choose_mode_hex_keeps_tiles_for_small_counts():
+    query = MapQuery.model_validate(
+        {"taxon": {"gbifKey": 5219426, "rank": "SPECIES"}, "map": {"style": "hex"}}
+    )
+    assert choose_mode(query, 400) == "tiles_plus_sample"
+
+
+def test_choose_mode_heat_keeps_tiles_for_small_counts():
+    query = MapQuery.model_validate(
+        {"taxon": {"gbifKey": 5219426, "rank": "SPECIES"}, "map": {"style": "heat"}}
+    )
+    assert choose_mode(query, 400) == "tiles_plus_sample"
+
+
 def test_download_predicate():
     predicate = mapquery_to_predicate(DownloadRequest(query=_jaguar()))
     assert predicate["type"] == "and"

@@ -23,6 +23,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"qgis" | "gbif" | null>(null);
   const mapRef = useRef<MapViewHandle>(null);
 
   useEffect(() => {
@@ -55,21 +56,22 @@ export default function App() {
     if (extras?.warnings?.length) setError(extras.warnings.join(" "));
   }
 
-  async function onSuggest(q: string) {
+  async function onSuggest(q: string, rankHint?: string | null) {
     setLoading(true);
     setError(null);
     try {
-      const data = await suggestTaxon(q);
+      const data = await suggestTaxon(q, rankHint);
       setTaxonCandidates(data.candidates);
       setTaxonNeeds(data.needsDisambiguation);
-      if (data.candidates[0]) {
+      if (data.candidates[0] && !data.needsDisambiguation) {
         const top = data.candidates[0];
         setQuery((prev) => ({
           ...prev,
           taxon: {
             ...prev.taxon,
             q,
-            gbifKey: data.needsDisambiguation ? prev.taxon?.gbifKey ?? null : top.gbifKey,
+            rankHint: rankHint ?? prev.taxon?.rankHint,
+            gbifKey: top.gbifKey,
             scientificName: top.scientificName,
             canonicalName: top.canonicalName,
             rank: top.rank,
@@ -78,6 +80,20 @@ export default function App() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Taxon lookup failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onResolvePlace() {
+    setLoading(true);
+    setError(null);
+    try {
+      const resolved = await resolveQuery(query);
+      await applyResolved(resolved.query, resolved);
+      if (resolved.warnings.length) setError(resolved.warnings.join(" "));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Place lookup failed");
     } finally {
       setLoading(false);
     }
@@ -171,34 +187,49 @@ export default function App() {
   }
 
   function exportPng() {
-    const dataUrl = mapRef.current?.exportPng();
-    if (!dataUrl) {
-      setDownloadMsg("Map is not ready to export yet.");
-      return;
+    try {
+      const dataUrl = mapRef.current?.exportPng();
+      if (!dataUrl) {
+        setDownloadMsg("Map is not ready to export yet.");
+        return;
+      }
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = "mapi-map.png";
+      link.click();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "PNG export failed";
+      setDownloadMsg(
+        /taint|security/i.test(message)
+          ? "PNG export was blocked by the browser (cross-origin basemap tiles). Use GeoJSON or QGIS export instead."
+          : message,
+      );
     }
-    const link = document.createElement("a");
-    link.href = dataUrl;
-    link.download = "mapi-map.png";
-    link.click();
   }
 
   async function exportQgis() {
     setDownloadMsg(null);
+    setBusyAction("qgis");
     try {
       await downloadQgisPackage(query);
       setDownloadMsg("Downloaded a QGIS package (GeoJSON + PyQGIS loader). Open it in QGIS Desktop.");
     } catch (err) {
       setDownloadMsg(err instanceof Error ? err.message : "QGIS export failed");
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function onDownload() {
     setDownloadMsg(null);
+    setBusyAction("gbif");
     try {
       const result = await requestGbifDownload(query);
       setDownloadMsg(result.message || (result.available ? `Queued ${result.key}` : "Download unavailable"));
     } catch (err) {
       setDownloadMsg(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -216,9 +247,10 @@ export default function App() {
         setNlPrompt={setNlPrompt}
         nlNotes={nlNotes}
         onSuggest={onSuggest}
+        onResolvePlace={() => void onResolvePlace()}
         onMap={() => void compile()}
         onPlan={() => void onPlan()}
-        onConfirmNl={() => nlDraft && void compile(nlDraft)}
+        onConfirmNl={() => void compile()}
         hasNlDraft={Boolean(nlDraft)}
         nlStatus={nlStatus}
       />
@@ -276,7 +308,7 @@ export default function App() {
                       />
                     </label>
                   </div>
-                  <button type="button" className="linkish" onClick={() => void compile()}>
+                  <button type="button" className="linkish" onClick={() => void compile()} disabled={loading}>
                     Apply year window
                   </button>
                 </>
@@ -291,11 +323,11 @@ export default function App() {
                 <button type="button" className="secondary" onClick={exportPng}>
                   Export map PNG
                 </button>
-                <button type="button" className="secondary" onClick={() => void exportQgis()}>
-                  Export QGIS package
+                <button type="button" className="secondary" onClick={() => void exportQgis()} disabled={busyAction !== null}>
+                  {busyAction === "qgis" ? "Exporting QGIS…" : "Export QGIS package"}
                 </button>
-                <button type="button" className="secondary" onClick={() => void onDownload()}>
-                  Request GBIF download
+                <button type="button" className="secondary" onClick={() => void onDownload()} disabled={busyAction !== null}>
+                  {busyAction === "gbif" ? "Requesting…" : "Request GBIF download"}
                 </button>
               </div>
               {downloadMsg ? <div className="empty">{downloadMsg}</div> : null}

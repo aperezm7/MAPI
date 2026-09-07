@@ -13,7 +13,8 @@ type Props = {
   nlPrompt: string;
   setNlPrompt: (value: string) => void;
   nlNotes: string[];
-  onSuggest: (q: string) => void;
+  onSuggest: (q: string, rankHint?: string | null) => void;
+  onResolvePlace: () => void;
   onMap: () => void;
   onPlan: () => void;
   onConfirmNl: () => void;
@@ -33,6 +34,7 @@ export default function QueryRail({
   setNlPrompt,
   nlNotes,
   onSuggest,
+  onResolvePlace,
   onMap,
   onPlan,
   onConfirmNl,
@@ -72,7 +74,7 @@ export default function QueryRail({
 
   function onTaxonSubmit(event: FormEvent) {
     event.preventDefault();
-    if (query.taxon?.q) onSuggest(query.taxon.q);
+    if (query.taxon?.q) onSuggest(query.taxon.q, query.taxon.rankHint);
   }
 
   return (
@@ -213,6 +215,9 @@ export default function QueryRail({
             placeholder="Costa Rica"
           />
         </label>
+        <button type="button" className="secondary" onClick={onResolvePlace} disabled={loading}>
+          Resolve place
+        </button>
         {placeNeeds ? <div className="warn">Pick a country match.</div> : null}
         {placeCandidates.length > 0 ? (
           <ul className="candidates">
@@ -262,6 +267,8 @@ export default function QueryRail({
               key={opt.code}
               type="button"
               className={selectedIucn.includes(opt.code) ? "chip active" : "chip ghost"}
+              title={opt.label}
+              aria-pressed={selectedIucn.includes(opt.code)}
               onClick={() => toggleIucn(opt.code)}
             >
               {opt.code}

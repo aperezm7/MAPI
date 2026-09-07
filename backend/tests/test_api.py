@@ -61,6 +61,28 @@ def test_health(client: TestClient):
 
 
 @respx.mock
+def test_taxon_suggest_uses_rank_hint(client: TestClient):
+    respx.get("https://api.gbif.org/v1/species/match").mock(
+        return_value=Response(200, json={"confidence": 100, "matchType": "NONE"})
+    )
+    respx.get("https://api.gbif.org/v1/species/suggest").mock(
+        return_value=Response(
+            200,
+            json=[
+                {"key": 8001309, "canonicalName": "Amphibia", "rank": "GENUS"},
+                {"key": 131, "canonicalName": "Amphibia", "rank": "CLASS", "kingdom": "Animalia"},
+            ],
+        )
+    )
+    response = client.get("/v1/taxon/suggest", params={"q": "amphibians", "rankHint": "class"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query"]["gbifKey"] == 131
+    assert body["query"]["rank"] == "CLASS"
+    assert body["needsDisambiguation"] is False
+
+
+@respx.mock
 def test_map_blocked_without_disambiguation_choice(client: TestClient):
     respx.get("https://api.gbif.org/v1/species/match").mock(
         return_value=Response(
