@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      GBIF_USER_AGENT: ${GBIF_USER_AGENT:-MAPI/0.1 (species occurrence maps; research/education)}
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080,http://localhost:8000
+      IUCN_API_TOKEN: ${IUCN_API_TOKEN:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-ollama}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:11434/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gemma4}
+      GBIF_USERNAME: ${GBIF_USERNAME:-}
+      GBIF_PASSWORD: ${GBIF_PASSWORD:-}
+      GBIF_DOWNLOAD_EMAIL: ${GBIF_DOWNLOAD_EMAIL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - api

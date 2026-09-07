@@ -1,0 +1,314 @@
+:root {
+  --ink: #1b2430;
+  --ink-soft: #4a5563;
+  --paper: #f3eee4;
+  --paper-2: #e7dfd0;
+  --line: #d2c7b4;
+  --accent: #b4532a;
+  --teal: #1f5f5b;
+  --danger: #9b2c2c;
+  --ok: #276749;
+  --map-gap: 16px;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) 1fr;
+  height: 100%;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 16px 12px;
+  background: var(--paper);
+  border-right: 1px solid var(--line);
+  overflow: auto;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brand h1 {
+  font-family: Newsreader, Georgia, serif;
+  font-size: 1.85rem;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.brand p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.card {
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+label.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 7px 8px;
+  color: var(--ink);
+}
+
+textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.row > * {
+  flex: 1;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  padding: 3px 8px;
+  font-size: 0.75rem;
+}
+
+.chip.active {
+  background: var(--teal);
+  color: #f7f4ee;
+  border-color: var(--teal);
+}
+
+.chip.ghost {
+  background: transparent;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button.primary,
+button.secondary,
+button.linkish {
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #f7f4ee;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+}
+
+button.linkish {
+  background: transparent;
+  border-color: transparent;
+  color: var(--teal);
+  padding: 4px 0;
+  text-align: left;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.loading:disabled {
+  cursor: wait;
+}
+
+.candidates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 140px;
+  overflow: auto;
+  border: 1px solid var(--line);
+}
+
+.candidates button {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.candidates button.selected {
+  background: #e8f0ee;
+}
+
+.candidates small {
+  display: block;
+  color: var(--ink-soft);
+}
+
+.warn,
+.empty,
+.ok {
+  font-size: 0.8rem;
+  padding: 8px;
+  border: 1px solid var(--line);
+}
+
+.warn {
+  background: #f8e6d8;
+  color: var(--danger);
+}
+
+.empty {
+  background: var(--paper-2);
+}
+
+.ok {
+  background: #e4f0e7;
+}
+
+.histogram {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 56px;
+}
+
+.histogram span {
+  flex: 1;
+  background: var(--teal);
+  min-width: 2px;
+  opacity: 0.85;
+}
+
+.stage {
+  position: relative;
+  min-width: 0;
+}
+
+.map {
+  width: 100%;
+  height: 100%;
+}
+
+.hud {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+  z-index: 2;
+  max-height: calc(100% - 24px);
+  overflow: auto;
+}
+
+.hud .card {
+  box-shadow: none;
+}
+
+.count-badge {
+  font-family: Newsreader, Georgia, serif;
+  font-size: 1.4rem;
+}
+
+.popup-photo {
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.footer-attr {
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+.record dt {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin-top: 6px;
+}
+
+.record dd {
+  margin: 0;
+}
+
+a {
+  color: var(--teal);
+}
+
+@media (max-width: 860px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 70vh;
+  }
+
+  .rail {
+    max-height: 50vh;
+  }
+}

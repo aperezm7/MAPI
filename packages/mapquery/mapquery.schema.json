@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mapi.local/schemas/mapquery.json",
+  "title": "MapQuery",
+  "description": "Canonical query contract for MAPI. The form, shareable URL, and LLM planner all produce this object. Resolvers fill canonical IDs; the compiler never invents coordinates.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "taxon": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "q": { "type": ["string", "null"] },
+        "rankHint": { "type": ["string", "null"] },
+        "gbifKey": { "type": ["integer", "null"] },
+        "scientificName": { "type": ["string", "null"] },
+        "canonicalName": { "type": ["string", "null"] },
+        "rank": { "type": ["string", "null"] }
+      }
+    },
+    "place": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "q": { "type": ["string", "null"] },
+        "kind": { "type": "string", "enum": ["country", "bbox", "gadm"] },
+        "iso2": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "bbox": {
+          "type": ["array", "null"],
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "time": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "yearMin": { "type": ["integer", "null"] },
+        "yearMax": { "type": ["integer", "null"] }
+      }
+    },
+    "conservation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "iucn": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["EX", "EW", "CR", "EN", "VU", "NT", "LC", "DD", "NE"]
+          }
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hasCoordinate": { "type": "boolean" },
+        "occurrenceStatus": { "type": "string" },
+        "basisOfRecord": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "map": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["tiles_plus_sample", "points", "tiles"]
+        },
+        "sampleLimit": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "style": { "type": "string", "enum": ["points", "hex", "heat"] },
+        "includeInat": { "type": "boolean" }
+      }
+    }
+  }
+}
