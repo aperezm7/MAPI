@@ -24,7 +24,7 @@ North-star example from the form: endangered amphibians in Costa Rica since 2015
 ## Local development
 
 ```bash
-cp .env.example .env   # Ollama is the default planner; add remote keys only if needed
+cp .env.example .env   # add GROQ_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY for a hosted planner
 
 # API
 cd backend
@@ -47,23 +47,28 @@ cd backend && pytest -q
 
 ## Natural-language planner
 
-Default planner is **local Ollama + Gemma 4** (`gemma4`). Pull and serve it, then **Plan query** in the UI:
+**Plan query** sends the sentence to an LLM, which returns a MapQuery (names, years, IUCN codes, map style). MAPI then resolves taxon keys and ISO codes through GBIF, so the model never supplies IDs or coordinates. Review the form, then **Confirm & map**.
+
+Any OpenAI-compatible chat-completions API works. Set one key and leave `LLM_PROVIDER` unset; MAPI picks the provider automatically:
+
+| Provider | Key | Default model | Notes |
+| --- | --- | --- | --- |
+| Groq | `GROQ_API_KEY` | `openai/gpt-oss-20b` | Fast, free tier |
+| Google Gemini | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini-3.8-flash` | Free tier via AI Studio |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` | |
+| OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-oss-20b` | Any OpenRouter model via `LLM_MODEL` |
+| Ollama (local) | none | `gemma4` | Used when no key is set |
+| Anything else | `LLM_API_KEY` (optional) | `LLM_MODEL` | `LLM_PROVIDER=openai_compatible` + `LLM_BASE_URL` |
+
+If several keys are set, the order is OpenAI, Gemini, Groq, OpenRouter; set `LLM_PROVIDER` to choose explicitly. `LLM_MODEL` overrides the model for any provider.
 
 ```bash
-ollama pull gemma4
-ollama serve   # if it is not already running
+export GROQ_API_KEY=gsk_...                 # hosted
+# or, fully local:
+ollama pull gemma4 && ollama serve
 ```
 
-To switch to a remote OpenAI-compatible API (OpenAI, Groq, …), set:
-
-```bash
-export LLM_PROVIDER=openai
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4o-mini
-export OPENAI_API_KEY=...
-```
-
-The model only emits a MapQuery. Taxon keys and ISO codes are resolved through GBIF after the LLM returns.
+`GET /v1/nl/status` reports the active provider and model, and whether it is ready (key present, or Ollama reachable with the model pulled). Keys never leave the server. Bad keys, unknown models, rate limits, and unreachable endpoints come back from `POST /v1/nl/plan` as HTTP 503 with a readable message.
 
 ## Docker
 
@@ -80,9 +85,10 @@ UI at http://localhost:8080, API at http://localhost:8000.
 | `GBIF_USER_AGENT` | Required courtesy identification to GBIF |
 | `REDIS_URL` | Shared cache; otherwise in-memory TTL |
 | `IUCN_API_TOKEN` | Red List v4 species-page status only |
-| `LLM_PROVIDER` | `ollama` (default, local Gemma 4) or `openai` for a remote OpenAI-compatible API |
-| `OPENAI_BASE_URL` / `OPENAI_MODEL` | Planner endpoint and model (`http://127.0.0.1:11434/v1` + `gemma4` by default) |
-| `OPENAI_API_KEY` | Required only for remote providers |
+| `LLM_PROVIDER` | `auto` (default), `groq`, `gemini`, `openai`, `openrouter`, `ollama`, or `openai_compatible` |
+| `GROQ_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | Hosted planner keys (see above) |
+| `LLM_MODEL` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_TIMEOUT_SECONDS` | Planner overrides for any provider |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Local planner (`http://127.0.0.1:11434/v1` + `gemma4` by default) |
 | `GBIF_USERNAME` / `GBIF_PASSWORD` | Async full occurrence download |
 
 Map filters for endangered/threatened taxa use GBIF `iucnRedListCategory` so maps work without an IUCN token.

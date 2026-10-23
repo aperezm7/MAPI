@@ -50,7 +50,7 @@ Auth for every route: **none**. CORS: `CORS_ORIGINS` (default localhost Vite/ngi
 | POST | `/v1/map` | `MapQuery` JSON | `MapResponse` + candidate flags + `blocked` | `build_map` | **OK** after fix | 200 + `blocked: true` when taxon is ambiguous and no `gbifKey`. Unscoped query returns count 0 + warning (not 4xx). Hex/heat styles now keep GBIF tiles even when the sample is small. |
 | POST | `/v1/inat/overlay` | `MapQuery` JSON | GeoJSON + `attribution`, `count`, `sampleTruncated` | `inat_layer` | **OK** | 502 on `InatError`. Place match is name-based, not ISO-strict. |
 | GET | `/v1/species/iucn` | `name` | `IucnStatusResponse` | `species_iucn` | **OK** | Always 200. Without token, `available: false` + message. Needs a binomial. |
-| GET | `/v1/nl/status` | — | `NlStatusResponse` | `nl_status` | **OK** | `available` is true for Ollama even if the daemon is down. Exposes `baseUrl` to the client. |
+| GET | `/v1/nl/status` | — | `NlStatusResponse` | `nl_status` | **OK** | Probes Ollama (`/api/tags`) for daemon + model; hosted providers report key presence. Exposes `baseUrl`, never the key. |
 | POST | `/v1/nl/plan` | `{prompt: 3–2000 chars}` | `NlPlanResponse` | `nl_plan` | **OK** | 503 on `LlmError` / missing remote key. Strips model-supplied `gbifKey`/`iso2` and re-resolves via GBIF. |
 | POST | `/v1/downloads/gbif` | `{query, format: SIMPLE_CSV\|DWCA}` | `DownloadResponse` | `gbif_download` | **OK** (security: **issue**) | 200 with `available: false` if no GBIF account. UI always sends `SIMPLE_CSV`. Uses **server** GBIF credentials. |
 | POST | `/v1/export/qgis` | `MapQuery` JSON | `application/zip` | `export_qgis` | **OK** | 409 if taxon still needs a pick. Recompiles the map (not the on-screen sample). |
@@ -160,7 +160,7 @@ No dead `onClick` handlers were found. The closest “dead” pieces were: unuse
 19. **Style / iNat / IUCN chips do not recompile** until Draw map — easy to think the map already changed.
 20. **QGIS export vs GeoJSON export disagree** after HUD edits: GeoJSON is the last compiled `mapData`; QGIS recompiles the live form `query`.
 21. **Place disambiguation does not block mapping** (unlike taxon). “United” can auto-pick the first GBIF hit.
-22. **Planner `available: true` for Ollama** even when `ollama serve` is down — failure only on Plan query (503).
+22. ~~**Planner `available: true` for Ollama** even when `ollama serve` is down~~ — fixed: status now probes Ollama and reports a missing model.
 23. **In-memory cache** never evicts expired keys until read; unique queries grow RAM.
 24. **`GET /v1/countries` unused by UI** after adding Resolve place (resolve loads the same list server-side).
 25. **OSM raster tiles** may violate OSM tile usage expectations under load and may taint PNG export — consider a CORS-friendly basemap if PNG is a first-class feature.
