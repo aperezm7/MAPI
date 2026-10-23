@@ -98,8 +98,8 @@ async def species_iucn(request: Request, name: str) -> IucnStatusResponse:
 
 
 @router.get("/v1/nl/status", response_model=NlStatusResponse)
-async def nl_status() -> NlStatusResponse:
-    return llm.planner_status()
+async def nl_status(request: Request) -> NlStatusResponse:
+    return await llm.planner_status(request.app.state.http)
 
 
 @router.post("/v1/nl/plan")

@@ -198,33 +198,52 @@ def test_nl_plan_maps_connection_errors_to_503(client: TestClient):
 
 
 def test_nl_without_key(client: TestClient, monkeypatch: pytest.MonkeyPatch):
-    class Dummy:
-        openai_api_key = None
-        openai_model = "gpt-4o-mini"
-        openai_base_url = "https://api.openai.com/v1"
-        llm_provider = "openai"
-
-        def provider(self) -> str:
-            return "openai"
-
-        def llm_available(self) -> bool:
-            return False
-
-        def llm_api_key(self) -> str:
-            return ""
-
-    monkeypatch.setattr("app.services.llm.get_settings", lambda: Dummy())
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    get_settings.cache_clear()
     response = client.post("/v1/nl/plan", json={"prompt": "show jaguars in Costa Rica"})
     assert response.status_code == 503
+    assert "GROQ_API_KEY" in response.json()["detail"]
+
+    status = client.get("/v1/nl/status").json()
+    assert status["available"] is False
+    assert status["provider"] == "groq"
 
 
+@respx.mock
 def test_nl_status_defaults_to_ollama(client: TestClient):
+    respx.get("http://127.0.0.1:11434/api/tags").mock(
+        return_value=Response(200, json={"models": [{"name": "gemma4:latest"}]})
+    )
     response = client.get("/v1/nl/status")
     assert response.status_code == 200
     body = response.json()
     assert body["available"] is True
     assert body["provider"] == "ollama"
-    assert "gemma" in body["model"].lower() or body["model"]
+    assert body["model"] == "gemma4"
+
+
+@respx.mock
+def test_nl_status_reports_ollama_down_or_model_missing(client: TestClient):
+    route = respx.get("http://127.0.0.1:11434/api/tags")
+    route.mock(side_effect=httpx.ConnectError("down"))
+    body = client.get("/v1/nl/status").json()
+    assert body["available"] is False
+    assert "ollama serve" in body["message"]
+
+    route.mock(return_value=Response(200, json={"models": [{"name": "llama3.2:3b"}]}))
+    body = client.get("/v1/nl/status").json()
+    assert body["available"] is False
+    assert "ollama pull gemma4" in body["message"]
+
+
+def test_nl_status_hosted_provider_never_exposes_key(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-gemini-key")
+    get_settings.cache_clear()
+    response = client.get("/v1/nl/status")
+    body = response.json()
+    assert body["available"] is True
+    assert body["provider"] == "gemini"
+    assert "secret-gemini-key" not in response.text
 
 
 @respx.mock
