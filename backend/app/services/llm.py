@@ -18,7 +18,10 @@ Convert the user's request into a JSON object with this exact shape:
 {"query": MapQuery, "notes": [short strings explaining assumptions]}
 
 MapQuery fields (omit any field the user did not ask for):
-- taxon: {"q": taxon name as written or its scientific name, "rankHint": one of kingdom|phylum|class|order|family|genus|species}
+- taxon: {"q": scientific name, "rankHint": one of kingdom|phylum|class|order|family|genus|species}
+  Translate common names to the scientific name when you are confident
+  (jaguar -> Panthera onca/species, frogs -> Anura/order, birds -> Aves/class, oaks -> Quercus/genus);
+  otherwise keep the name as written.
 - place: {"q": country name, "kind": "country"}
 - time: {"yearMin": integer or null, "yearMax": integer or null}
 - conservation: {"iucn": list of IUCN codes}
@@ -163,7 +166,9 @@ def _payload(cfg: LlmConfig, messages: list[dict[str, Any]], json_mode: bool) ->
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     if cfg.provider == "ollama":
+        # Ollama's /v1 endpoint ignores `think`; reasoning_effort "none" is what disables thinking there.
         payload["think"] = False
+        payload["reasoning_effort"] = "none"
     elif cfg.provider == "groq" and "gpt-oss" in cfg.model:
         payload["reasoning_effort"] = "low"
     return payload
