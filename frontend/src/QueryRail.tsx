@@ -105,6 +105,7 @@ export default function QueryRail({
             onClick={onPlan}
             disabled={loading}
             aria-busy={loading}
+            title={nlStatus && !nlStatus.available ? nlStatus.message ?? "Planner unavailable" : "Turn the sentence into a MapQuery"}
           >
             {loading ? "Planning…" : "Plan query"}
           </button>
@@ -119,7 +120,7 @@ export default function QueryRail({
           </button>
         </div>
         {!hasNlDraft && !loading ? (
-          <div className="footer-attr">First plan the sentence with Gemma 4, then confirm the resolved query.</div>
+          <div className="footer-attr">First plan the sentence with the configured LLM, then review and confirm the resolved query.</div>
         ) : null}
         {nlNotes.map((note) => (
           <div className="empty" key={note}>

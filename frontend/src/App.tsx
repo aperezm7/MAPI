@@ -30,11 +30,13 @@ export default function App() {
     writeQueryToUrl(query);
   }, [query]);
 
-  useEffect(() => {
+  function refreshNlStatus() {
     fetchNlStatus()
       .then(setNlStatus)
       .catch(() => setNlStatus(null));
-  }, []);
+  }
+
+  useEffect(refreshNlStatus, []);
 
   const maxHist = useMemo(
     () => Math.max(1, ...(mapData?.histogram.map((h) => h.count) ?? [1])),
@@ -157,6 +159,7 @@ export default function App() {
       await applyResolved(planned.resolve.query, planned.resolve);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Planner unavailable");
+      refreshNlStatus();
     } finally {
       setLoading(false);
     }
