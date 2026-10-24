@@ -109,8 +109,7 @@ Single page, no client router. Shareable state is `?q=` (base64url MapQuery).
 
 | Control | Intended action | API / client | Status |
 | --- | --- | --- | --- |
-| Year sliders | Edit `time.yearMin/Max` from histogram range | local | **issue** — histogram is the **sample**, not full GBIF years; sliders can invert min/max (backend swaps) |
-| **Apply year window** | Recompile | same as Draw map | **OK** after fix — now disabled while loading |
+| Year range | One slider, start and end years labeled | local, then `POST /v1/map` on release | **OK** — handles cannot cross; years are shown on the handles and as "From … to …". Histogram is the full GBIF year facet (year filter removed), so narrowing the window does not collapse the scale |
 | **Export sample GeoJSON** | Download on-screen sample | client Blob | **OK** — disabled if no features |
 | **Export boundary GeoJSON** | Download outline | client Blob | **OK** — disabled if no outline |
 | **Export map PNG** | Screenshot MapLibre canvas | `canvas.toDataURL` | **OK** after fix — tainted-canvas used to throw uncaught; still **unverified** against OSM CORS |
@@ -158,7 +157,7 @@ No dead `onClick` handlers were found. The closest “dead” pieces were: unuse
 15. **`map.sampleLimit` (up to 10000) is not honored.** Compiler fetches one page of `min(sampleLimit, 300)`. `occurrence_pages()` exists and is unused. Likely intentional (GBIF hang comments) but the schema over-promises.
 16. **`place.kind` `gadm` is unimplemented.** Resolve always emits `kind="country"`. `bbox` works in the compiler/shapes but has no UI.
 17. **Mode `tiles` / `points` is not in the UI.** Auto-chosen except when hex/heat force tiles.
-18. **Year sliders vs histogram.** Histogram is the inspectable sample (warning text exists). Applying a window from sample years can hide the rest of the GBIF series.
+18. ~~**Year sliders vs histogram.**~~ Fixed: one dual-ended slider labeled with the start and end years. The histogram is the full GBIF year facet for the query without the year filter, so the scale stays put when the window changes. The sample fallback (and its warning) remains only if the facet call fails.
 19. **Style / iNat / IUCN chips do not recompile** until Draw map — easy to think the map already changed.
 20. **QGIS export vs GeoJSON export disagree** after HUD edits: GeoJSON is the last compiled `mapData`; QGIS recompiles the live form `query`.
 21. **Place disambiguation does not block mapping** (unlike taxon). “United” can auto-pick the first GBIF hit.

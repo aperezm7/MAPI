@@ -227,18 +227,95 @@ button.loading:disabled {
   background: #e4f0e7;
 }
 
-.histogram {
+.year-range {
   display: flex;
-  align-items: flex-end;
-  gap: 1px;
-  height: 56px;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
 }
 
-.histogram span {
-  flex: 1;
+.year-histogram {
+  position: relative;
+  height: 52px;
+}
+
+.year-histogram span {
+  position: absolute;
+  bottom: 0;
   background: var(--teal);
-  min-width: 2px;
-  opacity: 0.85;
+  border-radius: 1px 1px 0 0;
+}
+
+.year-histogram span.out {
+  opacity: 0.28;
+}
+
+.year-track {
+  position: relative;
+  height: 22px;
+  margin: 16px 10px 0;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.year-track-rail,
+.year-track-fill {
+  position: absolute;
+  top: 8px;
+  height: 6px;
+  border-radius: 99px;
+}
+
+.year-track-rail {
+  left: 0;
+  right: 0;
+  background: var(--paper-2);
+}
+
+.year-track-fill {
+  background: var(--teal);
+}
+
+.year-thumb {
+  position: absolute;
+  top: 1px;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 1px 3px rgba(27, 36, 48, 0.35);
+  cursor: grab;
+  touch-action: none;
+}
+
+.year-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.year-thumb-label {
+  position: absolute;
+  left: 50%;
+  top: -16px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.year-caption {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+.year-caption strong {
+  color: var(--ink);
+  font-weight: 650;
 }
 
 .stage {

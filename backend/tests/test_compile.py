@@ -10,6 +10,7 @@ from app.compile import (
 )
 from app.models import DownloadRequest, MapQuery
 from app.services.downloads import mapquery_to_predicate
+from app.services.mapping import histogram_from_facets
 
 
 def _jaguar() -> MapQuery:
@@ -163,3 +164,22 @@ async def test_unscoped_map_rejected():
     assert result.count == 0
     assert result.tile is None
     assert any("taxon" in w.lower() or "country" in w.lower() for w in result.warnings)
+
+
+def test_histogram_from_facets_fills_gaps_and_drops_outliers():
+    histogram = histogram_from_facets(
+        [
+            {
+                "field": "YEAR",
+                "counts": [
+                    {"name": "2020", "count": 5},
+                    {"name": "2018", "count": 2},
+                    {"name": "999", "count": 9},
+                    {"name": "nope", "count": 1},
+                ],
+            }
+        ]
+    )
+    assert [(item.year, item.count) for item in histogram] == [(2018, 2), (2019, 0), (2020, 5)]
+    assert histogram_from_facets([]) == []
+    assert histogram_from_facets([{"field": "MONTH", "counts": [{"name": "1", "count": 3}]}]) == []
