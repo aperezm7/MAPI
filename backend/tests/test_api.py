@@ -323,3 +323,54 @@ def test_qgis_export_zip(client: TestClient):
     assert "boundary.geojson" in names
     assert "load_in_qgis.py" in names
     assert "mapi.qgs" in names
+
+
+@respx.mock
+def test_taxon_autocomplete_prefers_alias_and_rank(client: TestClient):
+    def suggest(request):
+        q = request.url.params["q"]
+        if q == "Amphibia":
+            return Response(200, json=[
+                {"key": 8001309, "canonicalName": "Amphibia", "rank": "GENUS", "status": "DOUBTFUL"},
+                {"key": 131, "canonicalName": "Amphibia", "rank": "CLASS", "status": "ACCEPTED"},
+                {"key": 999, "canonicalName": "Amphibiaceae", "rank": "FAMILY", "status": "ACCEPTED"},
+            ])
+        return Response(200, json=[
+            {"key": 7, "canonicalName": "Amphibolis", "rank": "GENUS", "status": "SYNONYM"},
+            {"key": 5, "canonicalName": "Amphibium", "rank": "GENUS", "status": "ACCEPTED"},
+            {"key": 131, "canonicalName": "Amphibia", "rank": "CLASS", "status": "ACCEPTED"},
+        ])
+
+    respx.get("https://api.gbif.org/v1/species/suggest").mock(side_effect=suggest)
+    body = client.get("/v1/taxon/autocomplete", params={"q": "amphib"}).json()
+    assert [c["gbifKey"] for c in body["candidates"]] == [131, 5, 7]
+
+    body = client.get("/v1/taxon/autocomplete", params={"q": "amphib", "rankHint": "genus"}).json()
+    assert [c["gbifKey"] for c in body["candidates"]] == [5, 7, 131]
+
+
+def test_taxon_autocomplete_short_query_is_empty(client: TestClient):
+    assert client.get("/v1/taxon/autocomplete", params={"q": "a"}).json() == {"candidates": []}
+    assert client.get("/v1/taxon/autocomplete", params={"q": ""}).status_code == 422
+
+
+@respx.mock
+def test_place_suggest_matches_and_reports_misses(client: TestClient):
+    respx.get("https://api.gbif.org/v1/enumeration/country").mock(
+        return_value=Response(200, json=[
+            {"iso2": "CO", "iso3": "COL", "title": "Colombia"},
+            {"iso2": "CR", "iso3": "CRI", "title": "Costa Rica"},
+            {"iso2": "CA", "iso3": "CAN", "title": "Canada"},
+        ])
+    )
+    body = client.get("/v1/place/suggest", params={"q": "co"}).json()
+    assert [c["iso2"] for c in body["candidates"]] == ["CO", "CR"]
+
+    body = client.get("/v1/place/suggest", params={"q": "colombia"}).json()
+    assert body["query"]["iso2"] == "CO"
+    assert body["needsDisambiguation"] is False
+
+    body = client.get("/v1/place/suggest", params={"q": "Atlantis"}).json()
+    assert body["candidates"] == []
+    assert body["query"] is None
+    assert "Atlantis" in body["warnings"][0]

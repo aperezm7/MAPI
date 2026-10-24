@@ -33,6 +33,8 @@ VERNACULAR_ALIASES = {
     "fish": "Actinopterygii",
 }
 
+INFRASPECIFIC_RANKS = {"SUBSPECIES", "VARIETY", "SUBVARIETY", "FORM", "SUBFORM", "INFRASPECIFIC_NAME"}
+
 FALLBACK_COUNTRIES = [
     {"iso2": "CR", "iso3": "CRI", "title": "Costa Rica", "gbifRegion": "LATIN_AMERICA"},
     {"iso2": "US", "iso3": "USA", "title": "United States of America", "gbifRegion": "NORTH_AMERICA"},
@@ -227,6 +229,36 @@ async def resolve_taxon(client: httpx.AsyncClient, taxon: TaxonQuery) -> tuple[T
     return resolved, candidates[:12], needs, warnings
 
 
+async def autocomplete_taxa(
+    client: httpx.AsyncClient, q: str, rank_hint: str | None = None, limit: int = 8
+) -> list[TaxonCandidate]:
+    needle = q.strip()
+    if len(needle) < 2:
+        return []
+    lookups = [needle]
+    folded = needle.casefold()
+    alias = next((target for name, target in VERNACULAR_ALIASES.items() if name.startswith(folded)), None)
+    if alias and alias.casefold() != folded:
+        lookups.insert(0, alias)
+    candidates: list[TaxonCandidate] = []
+    for lookup in lookups:
+        rows = await gbif.suggest_species(client, lookup, limit=min(20, limit * 2))
+        found = [c for row in rows if (c := _taxon_from_suggest(row))]
+        if lookup is alias:
+            found = [c for c in found if (c.canonicalName or "").casefold() == alias.casefold()]
+            found = sorted(found, key=lambda c: (c.status or "").upper() != "ACCEPTED")[:1]
+        candidates.extend(found)
+    candidates = _dedupe(candidates)
+    candidates.sort(
+        key=lambda c: (
+            bool(rank_hint) and not _rank_matches(c.rank, rank_hint),
+            (c.status or "ACCEPTED").upper() != "ACCEPTED",
+            (c.rank or "").upper() in INFRASPECIFIC_RANKS,
+        )
+    )
+    return candidates[:limit]
+
+
 def _place_candidate(row: dict[str, Any]) -> PlaceCandidate | None:
     iso2 = row.get("iso2") or row.get("isoCode")
     title = row.get("title") or row.get("name")
@@ -265,6 +297,21 @@ def match_places(countries: list[PlaceCandidate], q: str) -> list[PlaceCandidate
     starts = [c for c in countries if c.title.casefold().startswith(needle)]
     contains = [c for c in countries if needle in c.title.casefold() and c not in starts]
     return (starts + contains)[:12]
+
+
+def suggest_places(countries: list[PlaceCandidate], q: str, limit: int = 8) -> list[PlaceCandidate]:
+    needle = q.strip().casefold()
+    if not needle:
+        return []
+    exact = match_places(countries, q) if len(needle) <= 3 else []
+    starts = [c for c in countries if c.title.casefold().startswith(needle)]
+    words = [c for c in countries if any(word.startswith(needle) for word in c.title.casefold().split()[1:])]
+    contains = [c for c in countries if needle in c.title.casefold()]
+    out: list[PlaceCandidate] = []
+    for item in exact + starts + words + contains:
+        if item not in out:
+            out.append(item)
+    return out[:limit]
 
 
 async def resolve_place(client: httpx.AsyncClient, place: PlaceQuery) -> tuple[PlaceQuery | None, list[PlaceCandidate], bool, list[str]]:
