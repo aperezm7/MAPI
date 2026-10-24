@@ -45,6 +45,8 @@ Auth for every route: **none**. CORS: `CORS_ORIGINS` (default localhost Vite/ngi
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/health` | — | `{status, service}` | `health` | **OK** | Liveness only. Proxied in Vite and nginx. |
 | GET | `/v1/countries` | — | `{countries: PlaceCandidate[]}` | `countries` | **OK** (UI unused) | GBIF enumeration, 8-country fallback on failure. `fetchCountries()` exists in the client but is never called. |
+| GET | `/v1/taxon/autocomplete` | `q` (1–200), `rankHint?`, `limit=8` | `{candidates}` | `taxon_autocomplete` | **OK** | Type-ahead: GBIF suggest + common-name aliases; accepted names and species-level ranks first; `q` under 2 chars → empty. |
+| GET | `/v1/place/suggest` | `q` (1–200) | `{query, candidates, needsDisambiguation, warnings}` | `place_suggest` | **OK** | Country type-ahead and Enter-time resolution; miss → `query: null` + warning. |
 | GET | `/v1/taxon/suggest` | `q` (required), `limit=12`, `rankHint?` | `{query, candidates, needsDisambiguation, warnings}` | `taxon_suggest` | **OK** after fix | Previously ignored form `rankHint`. Empty `q` → empty candidates. Missing `q` → 422. |
 | POST | `/v1/query/resolve` | `MapQuery` JSON | `ResolveResponse` | `query_resolve` | **OK** | Fills `gbifKey` / `iso2`; flags homonyms. |
 | POST | `/v1/map` | `MapQuery` JSON | `MapResponse` + candidate flags + `blocked` | `build_map` | **OK** after fix | 200 + `blocked: true` when taxon is ambiguous and no `gbifKey`. Unscoped query returns count 0 + warning (not 4xx). Hex/heat styles now keep GBIF tiles even when the sample is small. |
@@ -91,11 +93,11 @@ Single page, no client router. Shareable state is `?q=` (base64url MapQuery).
 | **Confirm & map** | Draw map from current form (after a plan) | `POST /v1/query/resolve` + `POST /v1/map` (+ iNat/IUCN) | **OK** after fix — used to compile a stale `nlDraft` if the user edited the form |
 | Example: amphibians CR 2015+ | Load `NORTHSTAR` preset | local `setQuery` | **OK** — does not auto-draw (user must Draw map) |
 | Example: jaguar in Costa Rica | Load `JAGUAR_PRESET` | local `setQuery` | **OK** — same |
-| Taxon name + Rank hint | Edit query | local; clears `gbifKey` on name change | **OK** |
-| **Resolve taxon** (form submit) | GBIF suggest | `GET /v1/taxon/suggest?q&rankHint` | **OK** after fix — `rankHint` was dropped |
+| Taxon name + Rank hint | Edit query; type-ahead suggestions | `GET /v1/taxon/autocomplete` (debounced 250 ms); clears `gbifKey` on name change | **OK** — Enter resolves, ↑/↓ + Enter picks a suggestion, Esc closes |
+| **Resolve taxon** (form submit / Enter) | GBIF suggest | `GET /v1/taxon/suggest?q&rankHint` | **OK** after fix — `rankHint` was dropped; no-match now shows an inline error |
 | Taxon candidate buttons | Pin `gbifKey` + names | local `patch` | **OK** |
-| Place country input | Edit place; clears `iso2` | local | **OK** |
-| **Resolve place** | Match country list | `POST /v1/query/resolve` | **OK** after fix — previously no place action; candidates only appeared after Draw map |
+| Place country input | Edit place; type-ahead suggestions | `GET /v1/place/suggest`; clears `iso2` | **OK** — Enter resolves |
+| **Resolve place** (button / Enter) | Match country list | `GET /v1/place/suggest` | **OK** after fix — previously cleared the field on a miss; now keeps the text and shows an inline error |
 | Place candidate buttons | Pin `iso2` | local `patch` | **OK** |
 | Time From / To | `yearMin` / `yearMax` | local | **issue** (validation) — empty is fine; values outside 1000–2100 422 on compile |
 | IUCN chips EX…NE | Toggle `conservation.iucn` | local | **OK** after fix — EX/EW/NE were missing vs schema |
