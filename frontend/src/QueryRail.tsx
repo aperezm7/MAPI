@@ -1,4 +1,6 @@
 import { FormEvent, useMemo } from "react";
+import Autocomplete from "./Autocomplete";
+import { autocompleteTaxon, suggestPlace } from "./api";
 import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
 import { IUCN_OPTIONS, JAGUAR_PRESET, NORTHSTAR } from "./types";
 
@@ -15,6 +17,11 @@ type Props = {
   nlNotes: string[];
   onSuggest: (q: string, rankHint?: string | null) => void;
   onResolvePlace: () => void;
+  onPickTaxon: (candidate: TaxonCandidate) => void;
+  onPickPlace: (candidate: PlaceCandidate) => void;
+  taxonError: string | null;
+  placeError: string | null;
+  clearLookupError: (field: "taxon" | "place") => void;
   onMap: () => void;
   onPlan: () => void;
   onConfirmNl: () => void;
@@ -35,6 +42,11 @@ export default function QueryRail({
   nlNotes,
   onSuggest,
   onResolvePlace,
+  onPickTaxon,
+  onPickPlace,
+  taxonError,
+  placeError,
+  clearLookupError,
   onMap,
   onPlan,
   onConfirmNl,
@@ -72,9 +84,14 @@ export default function QueryRail({
     patch({ conservation: { iucn: next } });
   }
 
-  function onTaxonSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (query.taxon?.q) onSuggest(query.taxon.q, query.taxon.rankHint);
+  function onTaxonSubmit(event?: FormEvent) {
+    event?.preventDefault();
+    if (!loading) onSuggest(query.taxon?.q ?? "", query.taxon?.rankHint);
+  }
+
+  function onPlaceSubmit(event?: FormEvent) {
+    event?.preventDefault();
+    if (!loading) onResolvePlace();
   }
 
   return (
@@ -146,11 +163,30 @@ export default function QueryRail({
         <h2>Taxon</h2>
         <label className="field">
           Name
-          <input
-            type="text"
+          <Autocomplete<TaxonCandidate>
             value={query.taxon?.q ?? ""}
-            onChange={(e) => patch({ taxon: { q: e.target.value, gbifKey: null } })}
+            onChange={(q) => {
+              clearLookupError("taxon");
+              patch({ taxon: { q, gbifKey: null, scientificName: null, canonicalName: null, rank: null } });
+            }}
+            fetchOptions={(q, signal) => autocompleteTaxon(q, query.taxon?.rankHint, signal)}
+            describe={(c) => ({
+              label: c.canonicalName || c.scientificName || String(c.gbifKey),
+              detail: [
+                c.rank,
+                c.class || c.kingdom,
+                c.status && c.status.toUpperCase() !== "ACCEPTED" ? c.status.toLowerCase() : null,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            })}
+            getKey={(c) => c.gbifKey}
+            onPick={onPickTaxon}
+            onEnter={() => onTaxonSubmit()}
             placeholder="Amphibia, Panthera onca…"
+            emptyHint="No quick matches. Press Enter to search GBIF, including common names."
+            invalid={Boolean(taxonError)}
+            describedBy={taxonError ? "taxon-error" : undefined}
           />
         </label>
         <label className="field">
@@ -172,6 +208,11 @@ export default function QueryRail({
         <button type="submit" className="secondary" disabled={loading}>
           Resolve taxon
         </button>
+        {taxonError ? (
+          <div className="warn" id="taxon-error" role="alert">
+            {taxonError}
+          </div>
+        ) : null}
         {taxonNeeds ? <div className="warn">Multiple matches — pick the intended taxon.</div> : null}
         {taxonCandidates.length > 0 ? (
           <ul className="candidates">
@@ -180,18 +221,7 @@ export default function QueryRail({
                 <button
                   type="button"
                   className={c.gbifKey === query.taxon?.gbifKey ? "selected" : ""}
-                  onClick={() =>
-                    patch({
-                      taxon: {
-                        q: query.taxon?.q,
-                        rankHint: query.taxon?.rankHint,
-                        gbifKey: c.gbifKey,
-                        scientificName: c.scientificName,
-                        canonicalName: c.canonicalName,
-                        rank: c.rank,
-                      },
-                    })
-                  }
+                  onClick={() => onPickTaxon(c)}
                 >
                   {c.canonicalName || c.scientificName}
                   <small>
@@ -205,20 +235,36 @@ export default function QueryRail({
         ) : null}
       </form>
 
-      <section className="card">
+      <form className="card" onSubmit={onPlaceSubmit}>
         <h2>Place</h2>
         <label className="field">
           Country
-          <input
-            type="text"
+          <Autocomplete<PlaceCandidate>
             value={query.place?.q ?? ""}
-            onChange={(e) => patch({ place: { q: e.target.value, iso2: null, kind: "country" } })}
+            onChange={(q) => {
+              clearLookupError("place");
+              patch({ place: { q, iso2: null, title: null, kind: "country" } });
+            }}
+            fetchOptions={async (q, signal) => (await suggestPlace(q, signal)).candidates}
+            describe={(c) => ({ label: c.title, detail: [c.iso2, c.iso3].filter(Boolean).join(" · ") })}
+            getKey={(c) => c.iso2}
+            onPick={onPickPlace}
+            onEnter={() => onPlaceSubmit()}
             placeholder="Costa Rica"
+            emptyHint="No country matches this text."
+            minChars={1}
+            invalid={Boolean(placeError)}
+            describedBy={placeError ? "place-error" : undefined}
           />
         </label>
-        <button type="button" className="secondary" onClick={onResolvePlace} disabled={loading}>
+        <button type="submit" className="secondary" disabled={loading}>
           Resolve place
         </button>
+        {placeError ? (
+          <div className="warn" id="place-error" role="alert">
+            {placeError}
+          </div>
+        ) : null}
         {placeNeeds ? <div className="warn">Pick a country match.</div> : null}
         {placeCandidates.length > 0 ? (
           <ul className="candidates">
@@ -227,7 +273,7 @@ export default function QueryRail({
                 <button
                   type="button"
                   className={c.iso2 === query.place?.iso2 ? "selected" : ""}
-                  onClick={() => patch({ place: { q: query.place?.q, kind: "country", iso2: c.iso2, title: c.title } })}
+                  onClick={() => onPickPlace(c)}
                 >
                   {c.title}
                   <small>{c.iso2}</small>
@@ -236,7 +282,7 @@ export default function QueryRail({
             ))}
           </ul>
         ) : null}
-      </section>
+      </form>
 
       <section className="card">
         <h2>Time</h2>

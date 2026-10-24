@@ -1,4 +1,4 @@
-import type { IucnStatus, InatOverlay, MapQuery, MapResponse, NlPlanResponse, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
+import type { IucnStatus, InatOverlay, MapQuery, MapResponse, NlPlanResponse, NlStatus, PlaceCandidate, PlaceQuery, TaxonCandidate } from "./types";
 
 function errorMessage(body: unknown, fallback: string): string {
   const detail = (body as { detail?: unknown } | null)?.detail;
@@ -46,6 +46,26 @@ export async function suggestTaxon(
   const params = new URLSearchParams({ q });
   if (rankHint) params.set("rankHint", rankHint);
   const response = await fetch(`/v1/taxon/suggest?${params}`);
+  return parse(response);
+}
+
+export async function autocompleteTaxon(q: string, rankHint?: string | null, signal?: AbortSignal): Promise<TaxonCandidate[]> {
+  const params = new URLSearchParams({ q });
+  if (rankHint) params.set("rankHint", rankHint);
+  const data = await parse<{ candidates: TaxonCandidate[] }>(await fetch(`/v1/taxon/autocomplete?${params}`, { signal }));
+  return data.candidates;
+}
+
+export async function suggestPlace(
+  q: string,
+  signal?: AbortSignal,
+): Promise<{
+  query: PlaceQuery | null;
+  candidates: PlaceCandidate[];
+  needsDisambiguation: boolean;
+  warnings: string[];
+}> {
+  const response = await fetch(`/v1/place/suggest?${new URLSearchParams({ q })}`, { signal });
   return parse(response);
 }
 

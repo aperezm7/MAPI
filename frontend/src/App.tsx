@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import QueryRail from "./QueryRail";
 import MapView, { type MapViewHandle } from "./MapView";
 import RecordPanel from "./RecordPanel";
-import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestTaxon, triggerDownload } from "./api";
+import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestPlace, suggestTaxon, triggerDownload } from "./api";
 import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate } from "./types";
 import { readQueryFromUrl, writeQueryToUrl } from "./urlState";
 
@@ -22,6 +22,8 @@ export default function App() {
   const [iucn, setIucn] = useState<IucnStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [taxonError, setTaxonError] = useState<string | null>(null);
+  const [placeError, setPlaceError] = useState<string | null>(null);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"qgis" | "gbif" | null>(null);
   const mapRef = useRef<MapViewHandle>(null);
@@ -59,46 +61,78 @@ export default function App() {
   }
 
   async function onSuggest(q: string, rankHint?: string | null) {
+    const name = q.trim();
+    if (!name) {
+      setTaxonError("Type a taxon name first.");
+      return;
+    }
     setLoading(true);
-    setError(null);
+    setTaxonError(null);
     try {
-      const data = await suggestTaxon(q, rankHint);
+      const data = await suggestTaxon(name, rankHint);
       setTaxonCandidates(data.candidates);
-      setTaxonNeeds(data.needsDisambiguation);
-      if (data.candidates[0] && !data.needsDisambiguation) {
-        const top = data.candidates[0];
-        setQuery((prev) => ({
-          ...prev,
-          taxon: {
-            ...prev.taxon,
-            q,
-            rankHint: rankHint ?? prev.taxon?.rankHint,
-            gbifKey: top.gbifKey,
-            scientificName: top.scientificName,
-            canonicalName: top.canonicalName,
-            rank: top.rank,
-          },
-        }));
+      setTaxonNeeds(data.needsDisambiguation && data.candidates.length > 0);
+      if (!data.candidates.length) {
+        setQuery((prev) => ({ ...prev, taxon: { q, rankHint: rankHint ?? prev.taxon?.rankHint } }));
+        setTaxonError(data.warnings[0] ?? `No GBIF taxon matches “${name}”.`);
+        return;
       }
+      if (data.warnings.length) setTaxonError(data.warnings.join(" "));
+      if (!data.needsDisambiguation) onPickTaxon(data.candidates[0], q, data.warnings);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Taxon lookup failed");
+      setTaxonError(err instanceof Error ? err.message : "Taxon lookup failed");
     } finally {
       setLoading(false);
     }
   }
 
+  function onPickTaxon(candidate: TaxonCandidate, typed?: string, warnings: string[] = []) {
+    setQuery((prev) => ({
+      ...prev,
+      taxon: {
+        q: typed ?? candidate.canonicalName ?? candidate.scientificName,
+        rankHint: prev.taxon?.rankHint,
+        gbifKey: candidate.gbifKey,
+        scientificName: candidate.scientificName,
+        canonicalName: candidate.canonicalName,
+        rank: candidate.rank,
+      },
+    }));
+    setTaxonCandidates((prev) => (prev.some((c) => c.gbifKey === candidate.gbifKey) ? prev : [candidate]));
+    setTaxonNeeds(false);
+    setTaxonError(warnings.length ? warnings.join(" ") : null);
+  }
+
   async function onResolvePlace() {
+    const name = (query.place?.q ?? "").trim();
+    if (!name) {
+      setPlaceError("Type a country name or ISO code first.");
+      return;
+    }
     setLoading(true);
-    setError(null);
+    setPlaceError(null);
     try {
-      const resolved = await resolveQuery(query);
-      await applyResolved(resolved.query, resolved);
-      if (resolved.warnings.length) setError(resolved.warnings.join(" "));
+      const data = await suggestPlace(name);
+      setPlaceCandidates(data.candidates);
+      if (!data.query?.iso2) {
+        setPlaceNeeds(false);
+        setPlaceError(data.warnings[0] ?? `No country matches “${name}”.`);
+        return;
+      }
+      setQuery((prev) => ({ ...prev, place: { ...data.query, q: prev.place?.q ?? name } }));
+      setPlaceNeeds(data.needsDisambiguation);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Place lookup failed");
+      setPlaceError(err instanceof Error ? err.message : "Place lookup failed");
     } finally {
       setLoading(false);
     }
+  }
+
+  function onPickPlace(candidate: PlaceCandidate) {
+    setQuery((prev) => ({ ...prev, place: { q: candidate.title, kind: "country", iso2: candidate.iso2, title: candidate.title } }));
+    setPlaceCandidates((prev) => (prev.some((c) => c.iso2 === candidate.iso2) ? prev : [candidate]));
+    setPlaceNeeds(false);
+    setPlaceError(null);
   }
 
   async function compile(target: MapQuery = query) {
@@ -249,8 +283,13 @@ export default function App() {
         nlPrompt={nlPrompt}
         setNlPrompt={setNlPrompt}
         nlNotes={nlNotes}
-        onSuggest={onSuggest}
+        onSuggest={(q, rankHint) => void onSuggest(q, rankHint)}
         onResolvePlace={() => void onResolvePlace()}
+        onPickTaxon={(c) => onPickTaxon(c)}
+        onPickPlace={onPickPlace}
+        taxonError={taxonError}
+        placeError={placeError}
+        clearLookupError={(field) => (field === "taxon" ? setTaxonError(null) : setPlaceError(null))}
         onMap={() => void compile()}
         onPlan={() => void onPlan()}
         onConfirmNl={() => void compile()}
