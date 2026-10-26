@@ -18,6 +18,10 @@ frontend/dist/
 .vscode/
 coverage/
 .coverage
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 .env
 .venv/
 venv/
@@ -36,3 +40,7 @@ frontend/dist/
 .vscode/
 coverage/
 .coverage
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

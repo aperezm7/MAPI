@@ -22,6 +22,94 @@ function errorMessage(body: unknown, fallback: string): string {
   return fallback;
 }
 
+const API_KEY_STORAGE = "mapi.apiKey";
+
+export function getApiKey(): string {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setApiKey(value: string) {
+  const key = value.trim();
+  if (key) localStorage.setItem(API_KEY_STORAGE, key);
+  else localStorage.removeItem(API_KEY_STORAGE);
+  window.dispatchEvent(new Event("mapi-account"));
+}
+
+export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const key = getApiKey();
+  if (key && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${key}`);
+  const response = await fetch(input, { ...init, headers });
+  if (response.ok && /\/v1\/(map|nl\/plan|query\/resolve|downloads|export|inat)/.test(input)) {
+    window.dispatchEvent(new Event("mapi-usage"));
+  }
+  return response;
+}
+
+export interface AccountStatus {
+  authRequired: boolean;
+  currency: string;
+  prices: Record<string, number>;
+  defaultBudget: number;
+  mapsPerDay: number;
+  plansPerDay: number;
+  requestsPerMinute: number;
+}
+
+export interface Account {
+  id: string;
+  name: string;
+  unlimited: boolean;
+  budget: number | null;
+  spent: number;
+  month: string;
+  mapsPerDay: number | null;
+  plansPerDay: number | null;
+  requestsPerMinute: number | null;
+  keyPrefix: string | null;
+  gbif: { connected: boolean; username: string | null; email: string | null };
+}
+
+export interface StoredQuery {
+  id: string;
+  kind: string;
+  summary: string;
+  cost: number;
+  status: string;
+  createdAt: string;
+}
+
+export async function fetchAccountStatus(): Promise<AccountStatus> {
+  return parse(await apiFetch("/v1/account/status"));
+}
+
+export async function fetchAccount(): Promise<Account> {
+  return parse(await apiFetch("/v1/account"));
+}
+
+export async function fetchAccountQueries(): Promise<StoredQuery[]> {
+  const data = await parse<{ queries: StoredQuery[] }>(await apiFetch("/v1/account/queries"));
+  return data.queries;
+}
+
+export async function connectGbif(username: string, password: string, email: string): Promise<Account> {
+  return parse(
+    await apiFetch("/v1/account/gbif", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, email: email || null }),
+    }),
+  );
+}
+
+export async function disconnectGbif(): Promise<Account> {
+  return parse(await apiFetch("/v1/account/gbif", { method: "DELETE" }));
+}
+
 async function parse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -31,7 +119,7 @@ async function parse<T>(response: Response): Promise<T> {
 }
 
 export async function fetchCountries(): Promise<PlaceCandidate[]> {
-  const data = await parse<{ countries: PlaceCandidate[] }>(await fetch("/v1/countries"));
+  const data = await parse<{ countries: PlaceCandidate[] }>(await apiFetch("/v1/countries"));
   return data.countries;
 }
 
@@ -45,14 +133,14 @@ export async function suggestTaxon(
 }> {
   const params = new URLSearchParams({ q });
   if (rankHint) params.set("rankHint", rankHint);
-  const response = await fetch(`/v1/taxon/suggest?${params}`);
+  const response = await apiFetch(`/v1/taxon/suggest?${params}`);
   return parse(response);
 }
 
 export async function autocompleteTaxon(q: string, rankHint?: string | null, signal?: AbortSignal): Promise<TaxonCandidate[]> {
   const params = new URLSearchParams({ q });
   if (rankHint) params.set("rankHint", rankHint);
-  const data = await parse<{ candidates: TaxonCandidate[] }>(await fetch(`/v1/taxon/autocomplete?${params}`, { signal }));
+  const data = await parse<{ candidates: TaxonCandidate[] }>(await apiFetch(`/v1/taxon/autocomplete?${params}`, { signal }));
   return data.candidates;
 }
 
@@ -65,12 +153,12 @@ export async function suggestPlace(
   needsDisambiguation: boolean;
   warnings: string[];
 }> {
-  const response = await fetch(`/v1/place/suggest?${new URLSearchParams({ q })}`, { signal });
+  const response = await apiFetch(`/v1/place/suggest?${new URLSearchParams({ q })}`, { signal });
   return parse(response);
 }
 
 export async function resolveQuery(query: MapQuery) {
-  const response = await fetch("/v1/query/resolve", {
+  const response = await apiFetch("/v1/query/resolve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(query),
@@ -86,7 +174,7 @@ export async function resolveQuery(query: MapQuery) {
 }
 
 export async function fetchMap(query: MapQuery): Promise<MapResponse> {
-  const response = await fetch("/v1/map", {
+  const response = await apiFetch("/v1/map", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(query),
@@ -95,7 +183,7 @@ export async function fetchMap(query: MapQuery): Promise<MapResponse> {
 }
 
 export async function fetchInat(query: MapQuery): Promise<InatOverlay> {
-  const response = await fetch("/v1/inat/overlay", {
+  const response = await apiFetch("/v1/inat/overlay", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(query),
@@ -104,17 +192,17 @@ export async function fetchInat(query: MapQuery): Promise<InatOverlay> {
 }
 
 export async function fetchIucn(name: string): Promise<IucnStatus> {
-  const response = await fetch(`/v1/species/iucn?name=${encodeURIComponent(name)}`);
+  const response = await apiFetch(`/v1/species/iucn?name=${encodeURIComponent(name)}`);
   return parse<IucnStatus>(response);
 }
 
 export async function fetchNlStatus(): Promise<NlStatus> {
-  const response = await fetch("/v1/nl/status");
+  const response = await apiFetch("/v1/nl/status");
   return parse<NlStatus>(response);
 }
 
 export async function planNl(prompt: string): Promise<NlPlanResponse> {
-  const response = await fetch("/v1/nl/plan", {
+  const response = await apiFetch("/v1/nl/plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt }),
@@ -123,7 +211,7 @@ export async function planNl(prompt: string): Promise<NlPlanResponse> {
 }
 
 export async function requestGbifDownload(query: MapQuery): Promise<{ available: boolean; message?: string; key?: string; statusUrl?: string }> {
-  const response = await fetch("/v1/downloads/gbif", {
+  const response = await apiFetch("/v1/downloads/gbif", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, format: "SIMPLE_CSV" }),
@@ -141,7 +229,7 @@ function triggerDownload(blob: Blob, filename: string) {
 }
 
 export async function downloadQgisPackage(query: MapQuery): Promise<void> {
-  const response = await fetch("/v1/export/qgis", {
+  const response = await apiFetch("/v1/export/qgis", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(query),

@@ -22,6 +22,16 @@ services:
       GBIF_USERNAME: ${GBIF_USERNAME:-}
       GBIF_PASSWORD: ${GBIF_PASSWORD:-}
       GBIF_DOWNLOAD_EMAIL: ${GBIF_DOWNLOAD_EMAIL:-}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+      MAPI_ADMIN_TOKEN: ${MAPI_ADMIN_TOKEN:-}
+      MAPI_SECRET_KEY: ${MAPI_SECRET_KEY:-}
+      DATABASE_PATH: /app/data/mapi.sqlite
+      QUOTA_MAPS_PER_DAY: ${QUOTA_MAPS_PER_DAY:-100}
+      QUOTA_PLANS_PER_DAY: ${QUOTA_PLANS_PER_DAY:-40}
+      QUOTA_REQUESTS_PER_MINUTE: ${QUOTA_REQUESTS_PER_MINUTE:-30}
+      DEFAULT_BUDGET: ${DEFAULT_BUDGET:-100}
+    volumes:
+      - mapi-data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -39,3 +49,6 @@ services:
       - "8080:80"
     depends_on:
       - api
+
+volumes:
+  mapi-data:
