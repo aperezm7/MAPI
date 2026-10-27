@@ -8,8 +8,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/v1": api,
-      "/health": api,
+      "/v1": { target: api, timeout: 240_000 },
+      "/health": { target: api, timeout: 240_000 },
     },
   },
 });
