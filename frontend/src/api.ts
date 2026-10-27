@@ -1,10 +1,31 @@
-import type { IucnStatus, InatOverlay, MapQuery, MapResponse, NlPlanResponse, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
+import type { IucnStatus, InatOverlay, MapQuery, MapResponse, NlPlanResponse, NlStatus, PlaceCandidate, PlaceQuery, TaxonCandidate } from "./types";
+
+function errorMessage(body: unknown, fallback: string): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "msg" in item) {
+          const loc = Array.isArray((item as { loc?: unknown }).loc)
+            ? (item as { loc: unknown[] }).loc.filter((part) => part !== "body").join(".")
+            : "";
+          const msg = String((item as { msg: unknown }).msg);
+          return loc ? `${loc}: ${msg}` : msg;
+        }
+        return "";
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  return fallback;
+}
 
 async function parse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail = (body as { detail?: string }).detail || response.statusText;
-    throw new Error(detail);
+    throw new Error(errorMessage(body, response.statusText));
   }
   return body as T;
 }
@@ -14,12 +35,37 @@ export async function fetchCountries(): Promise<PlaceCandidate[]> {
   return data.countries;
 }
 
-export async function suggestTaxon(q: string): Promise<{
+export async function suggestTaxon(
+  q: string,
+  rankHint?: string | null,
+): Promise<{
   candidates: TaxonCandidate[];
   needsDisambiguation: boolean;
   warnings: string[];
 }> {
-  const response = await fetch(`/v1/taxon/suggest?q=${encodeURIComponent(q)}`);
+  const params = new URLSearchParams({ q });
+  if (rankHint) params.set("rankHint", rankHint);
+  const response = await fetch(`/v1/taxon/suggest?${params}`);
+  return parse(response);
+}
+
+export async function autocompleteTaxon(q: string, rankHint?: string | null, signal?: AbortSignal): Promise<TaxonCandidate[]> {
+  const params = new URLSearchParams({ q });
+  if (rankHint) params.set("rankHint", rankHint);
+  const data = await parse<{ candidates: TaxonCandidate[] }>(await fetch(`/v1/taxon/autocomplete?${params}`, { signal }));
+  return data.candidates;
+}
+
+export async function suggestPlace(
+  q: string,
+  signal?: AbortSignal,
+): Promise<{
+  query: PlaceQuery | null;
+  candidates: PlaceCandidate[];
+  needsDisambiguation: boolean;
+  warnings: string[];
+}> {
+  const response = await fetch(`/v1/place/suggest?${new URLSearchParams({ q })}`, { signal });
   return parse(response);
 }
 
@@ -102,7 +148,7 @@ export async function downloadQgisPackage(query: MapQuery): Promise<void> {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error((body as { detail?: string }).detail || response.statusText);
+    throw new Error(errorMessage(body, response.statusText));
   }
   const blob = await response.blob();
   const header = response.headers.get("Content-Disposition") || "";

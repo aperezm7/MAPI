@@ -58,6 +58,16 @@ function fitCollection(map: maplibregl.Map, collection: GeoJSON.FeatureCollectio
   map.fitBounds(bounds, { padding: 60, maxZoom, duration: 700 });
 }
 
+function syncSampleVisibility(map: maplibregl.Map, style: string | undefined) {
+  const hidePoints = style === "heat" && map.getZoom() < 7;
+  const visibility = hidePoints ? "none" : "visible";
+  for (const layerId of ["gbif-points", "gbif-clusters", "gbif-cluster-count"]) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", visibility);
+    }
+  }
+}
+
 const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, inat, onSelect }, ref) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -227,13 +237,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, ina
       boundarySource?.setData(boundary);
       const sampleSource = map.getSource("gbif-sample") as maplibregl.GeoJSONSource | undefined;
       sampleSource?.setData(mapData?.sample ?? { type: "FeatureCollection", features: [] });
-      const hidePoints = mapData?.style === "heat" && map.getZoom() < 7;
-      if (map.getLayer("gbif-points")) {
-        map.setLayoutProperty("gbif-points", "visibility", hidePoints ? "none" : "visible");
-      }
-      if (map.getLayer("gbif-clusters")) {
-        map.setLayoutProperty("gbif-clusters", "visibility", hidePoints ? "none" : "visible");
-      }
+      syncSampleVisibility(map, mapData?.style);
       if (mapData?.sample?.features?.length) {
         fitCollection(map, mapData.sample, 8);
       } else if (boundary.features?.length) {
@@ -243,9 +247,15 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, ina
 
     if (!map.isStyleLoaded()) {
       map.once("load", apply);
-      return;
+    } else {
+      apply();
     }
-    apply();
+    const onZoom = () => syncSampleVisibility(map, mapData?.style);
+    map.on("zoom", onZoom);
+    return () => {
+      map.off("zoom", onZoom);
+      map.off("load", apply);
+    };
   }, [mapData]);
 
   useEffect(() => {

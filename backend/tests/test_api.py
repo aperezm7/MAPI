@@ -5,6 +5,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from httpx import Response
+import httpx
 
 from app.cache import reset_cache_for_tests
 from app.config import get_settings
@@ -58,6 +59,28 @@ def test_health(client: TestClient):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@respx.mock
+def test_taxon_suggest_uses_rank_hint(client: TestClient):
+    respx.get("https://api.gbif.org/v1/species/match").mock(
+        return_value=Response(200, json={"confidence": 100, "matchType": "NONE"})
+    )
+    respx.get("https://api.gbif.org/v1/species/suggest").mock(
+        return_value=Response(
+            200,
+            json=[
+                {"key": 8001309, "canonicalName": "Amphibia", "rank": "GENUS"},
+                {"key": 131, "canonicalName": "Amphibia", "rank": "CLASS", "kingdom": "Animalia"},
+            ],
+        )
+    )
+    response = client.get("/v1/taxon/suggest", params={"q": "amphibians", "rankHint": "class"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query"]["gbifKey"] == 131
+    assert body["query"]["rank"] == "CLASS"
+    assert body["needsDisambiguation"] is False
 
 
 @respx.mock
@@ -152,6 +175,72 @@ def test_map_with_resolved_jaguar(client: TestClient):
 
 
 @respx.mock
+def test_map_histogram_uses_full_year_facet(client: TestClient):
+    respx.get("https://api.gbif.org/v1/species/2481907").mock(
+        return_value=Response(200, json={"key": 2481907, "canonicalName": "Vultur gryphus", "rank": "SPECIES"})
+    )
+    respx.get("https://api.gbif.org/v1/enumeration/country").mock(
+        return_value=Response(200, json=[{"iso2": "CR", "iso3": "CRI", "title": "Costa Rica"}])
+    )
+    mock_geoboundaries_cri()
+
+    seen: list[str] = []
+
+    def search(request):
+        seen.append(str(request.url))
+        if "facet=year" in str(request.url):
+            return Response(
+                200,
+                json={
+                    "count": 40,
+                    "results": [],
+                    "facets": [
+                        {
+                            "field": "YEAR",
+                            "counts": [{"name": "2014", "count": 10}, {"name": "2016", "count": 30}],
+                        }
+                    ],
+                },
+            )
+        return Response(
+            200,
+            json={
+                "count": 1,
+                "results": [
+                    {
+                        "gbifID": 111,
+                        "decimalLatitude": 9.7,
+                        "decimalLongitude": -83.9,
+                        "year": 2020,
+                        "issues": [],
+                    }
+                ],
+            },
+        )
+
+    respx.get("https://api.gbif.org/v1/occurrence/search").mock(side_effect=search)
+    response = client.post(
+        "/v1/map",
+        json={
+            "taxon": {"gbifKey": 2481907},
+            "place": {"iso2": "CR"},
+            "time": {"yearMin": 2015, "yearMax": 2016},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [(item["year"], item["count"]) for item in body["histogram"]] == [
+        (2014, 10),
+        (2015, 0),
+        (2016, 30),
+    ]
+    assert not any("inspectable sample" in warning for warning in body["warnings"])
+    facet_urls = [url for url in seen if "facet=year" in url]
+    assert facet_urls and "eventDate" not in facet_urls[0]
+    assert any("eventDate" in url for url in seen)
+
+
+@respx.mock
 def test_iucn_without_token(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     class Dummy:
         iucn_api_token = None
@@ -166,34 +255,61 @@ def test_iucn_without_token(client: TestClient, monkeypatch: pytest.MonkeyPatch)
     assert "token" in (body["message"] or "").lower()
 
 
-def test_nl_without_key(client: TestClient, monkeypatch: pytest.MonkeyPatch):
-    class Dummy:
-        openai_api_key = None
-        openai_model = "gpt-4o-mini"
-        openai_base_url = "https://api.openai.com/v1"
-        llm_provider = "openai"
-
-        def provider(self) -> str:
-            return "openai"
-
-        def llm_available(self) -> bool:
-            return False
-
-        def llm_api_key(self) -> str:
-            return ""
-
-    monkeypatch.setattr("app.services.llm.get_settings", lambda: Dummy())
+@respx.mock
+def test_nl_plan_maps_connection_errors_to_503(client: TestClient):
+    respx.post("http://127.0.0.1:11434/v1/chat/completions").mock(side_effect=httpx.ConnectError("down"))
     response = client.post("/v1/nl/plan", json={"prompt": "show jaguars in Costa Rica"})
     assert response.status_code == 503
+    assert "unreachable" in response.json()["detail"].lower()
 
 
+def test_nl_without_key(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    get_settings.cache_clear()
+    response = client.post("/v1/nl/plan", json={"prompt": "show jaguars in Costa Rica"})
+    assert response.status_code == 503
+    assert "GROQ_API_KEY" in response.json()["detail"]
+
+    status = client.get("/v1/nl/status").json()
+    assert status["available"] is False
+    assert status["provider"] == "groq"
+
+
+@respx.mock
 def test_nl_status_defaults_to_ollama(client: TestClient):
+    respx.get("http://127.0.0.1:11434/api/tags").mock(
+        return_value=Response(200, json={"models": [{"name": "gemma4:latest"}]})
+    )
     response = client.get("/v1/nl/status")
     assert response.status_code == 200
     body = response.json()
     assert body["available"] is True
     assert body["provider"] == "ollama"
-    assert "gemma" in body["model"].lower() or body["model"]
+    assert body["model"] == "gemma4"
+
+
+@respx.mock
+def test_nl_status_reports_ollama_down_or_model_missing(client: TestClient):
+    route = respx.get("http://127.0.0.1:11434/api/tags")
+    route.mock(side_effect=httpx.ConnectError("down"))
+    body = client.get("/v1/nl/status").json()
+    assert body["available"] is False
+    assert "ollama serve" in body["message"]
+
+    route.mock(return_value=Response(200, json={"models": [{"name": "llama3.2:3b"}]}))
+    body = client.get("/v1/nl/status").json()
+    assert body["available"] is False
+    assert "ollama pull gemma4" in body["message"]
+
+
+def test_nl_status_hosted_provider_never_exposes_key(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-gemini-key")
+    get_settings.cache_clear()
+    response = client.get("/v1/nl/status")
+    body = response.json()
+    assert body["available"] is True
+    assert body["provider"] == "gemini"
+    assert "secret-gemini-key" not in response.text
 
 
 @respx.mock
@@ -273,3 +389,54 @@ def test_qgis_export_zip(client: TestClient):
     assert "boundary.geojson" in names
     assert "load_in_qgis.py" in names
     assert "mapi.qgs" in names
+
+
+@respx.mock
+def test_taxon_autocomplete_prefers_alias_and_rank(client: TestClient):
+    def suggest(request):
+        q = request.url.params["q"]
+        if q == "Amphibia":
+            return Response(200, json=[
+                {"key": 8001309, "canonicalName": "Amphibia", "rank": "GENUS", "status": "DOUBTFUL"},
+                {"key": 131, "canonicalName": "Amphibia", "rank": "CLASS", "status": "ACCEPTED"},
+                {"key": 999, "canonicalName": "Amphibiaceae", "rank": "FAMILY", "status": "ACCEPTED"},
+            ])
+        return Response(200, json=[
+            {"key": 7, "canonicalName": "Amphibolis", "rank": "GENUS", "status": "SYNONYM"},
+            {"key": 5, "canonicalName": "Amphibium", "rank": "GENUS", "status": "ACCEPTED"},
+            {"key": 131, "canonicalName": "Amphibia", "rank": "CLASS", "status": "ACCEPTED"},
+        ])
+
+    respx.get("https://api.gbif.org/v1/species/suggest").mock(side_effect=suggest)
+    body = client.get("/v1/taxon/autocomplete", params={"q": "amphib"}).json()
+    assert [c["gbifKey"] for c in body["candidates"]] == [131, 5, 7]
+
+    body = client.get("/v1/taxon/autocomplete", params={"q": "amphib", "rankHint": "genus"}).json()
+    assert [c["gbifKey"] for c in body["candidates"]] == [5, 7, 131]
+
+
+def test_taxon_autocomplete_short_query_is_empty(client: TestClient):
+    assert client.get("/v1/taxon/autocomplete", params={"q": "a"}).json() == {"candidates": []}
+    assert client.get("/v1/taxon/autocomplete", params={"q": ""}).status_code == 422
+
+
+@respx.mock
+def test_place_suggest_matches_and_reports_misses(client: TestClient):
+    respx.get("https://api.gbif.org/v1/enumeration/country").mock(
+        return_value=Response(200, json=[
+            {"iso2": "CO", "iso3": "COL", "title": "Colombia"},
+            {"iso2": "CR", "iso3": "CRI", "title": "Costa Rica"},
+            {"iso2": "CA", "iso3": "CAN", "title": "Canada"},
+        ])
+    )
+    body = client.get("/v1/place/suggest", params={"q": "co"}).json()
+    assert [c["iso2"] for c in body["candidates"]] == ["CO", "CR"]
+
+    body = client.get("/v1/place/suggest", params={"q": "colombia"}).json()
+    assert body["query"]["iso2"] == "CO"
+    assert body["needsDisambiguation"] is False
+
+    body = client.get("/v1/place/suggest", params={"q": "Atlantis"}).json()
+    assert body["candidates"] == []
+    assert body["query"] is None
+    assert "Atlantis" in body["warnings"][0]

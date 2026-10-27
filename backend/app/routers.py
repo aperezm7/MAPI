@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from app.models import (
@@ -11,8 +11,8 @@ from app.models import (
 from app.services import downloads, inat, iucn, llm
 from app.services.mapping import compile_map
 from app.services.qgis_export import build_qgis_zip, package_slug
-from app.services.resolve import load_countries, resolve_query, resolve_taxon
-from app.models import TaxonQuery
+from app.services.resolve import autocomplete_taxa, load_countries, resolve_place, resolve_query, resolve_taxon, suggest_places
+from app.models import PlaceQuery, TaxonQuery
 
 router = APIRouter()
 
@@ -30,14 +30,43 @@ async def countries(request: Request) -> dict:
 
 
 @router.get("/v1/taxon/suggest")
-async def taxon_suggest(request: Request, q: str, limit: int = 12) -> dict:
+async def taxon_suggest(
+    request: Request, q: str, limit: int = 12, rankHint: str | None = None
+) -> dict:
     client = request.app.state.http
     if not q.strip():
         return {"candidates": []}
-    taxon, candidates, needs, warnings = await resolve_taxon(client, TaxonQuery(q=q.strip()))
+    taxon, candidates, needs, warnings = await resolve_taxon(
+        client, TaxonQuery(q=q.strip(), rankHint=rankHint)
+    )
     return {
         "query": taxon.model_dump() if taxon else None,
         "candidates": [c.model_dump(by_alias=True) for c in candidates[:limit]],
+        "needsDisambiguation": needs,
+        "warnings": warnings,
+    }
+
+
+@router.get("/v1/taxon/autocomplete")
+async def taxon_autocomplete(
+    request: Request,
+    q: str = Query(min_length=1, max_length=200),
+    rankHint: str | None = None,
+    limit: int = Query(default=8, ge=1, le=20),
+) -> dict:
+    client = request.app.state.http
+    candidates = await autocomplete_taxa(client, q, rank_hint=rankHint, limit=limit)
+    return {"candidates": [c.model_dump(by_alias=True) for c in candidates]}
+
+
+@router.get("/v1/place/suggest")
+async def place_suggest(request: Request, q: str = Query(min_length=1, max_length=200)) -> dict:
+    client = request.app.state.http
+    place, _, needs, warnings = await resolve_place(client, PlaceQuery(q=q.strip()))
+    candidates = suggest_places(await load_countries(client), q)
+    return {
+        "query": place.model_dump() if place else None,
+        "candidates": [c.model_dump() for c in candidates],
         "needsDisambiguation": needs,
         "warnings": warnings,
     }
@@ -94,8 +123,8 @@ async def species_iucn(request: Request, name: str) -> IucnStatusResponse:
 
 
 @router.get("/v1/nl/status", response_model=NlStatusResponse)
-async def nl_status() -> NlStatusResponse:
-    return llm.planner_status()
+async def nl_status(request: Request) -> NlStatusResponse:
+    return await llm.planner_status(request.app.state.http)
 
 
 @router.post("/v1/nl/plan")

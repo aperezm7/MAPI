@@ -9,10 +9,16 @@ services:
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:5173,http://localhost:8080,http://localhost:8000
       IUCN_API_TOKEN: ${IUCN_API_TOKEN:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-ollama}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:11434/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gemma4}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4}
       GBIF_USERNAME: ${GBIF_USERNAME:-}
       GBIF_PASSWORD: ${GBIF_PASSWORD:-}
       GBIF_DOWNLOAD_EMAIL: ${GBIF_DOWNLOAD_EMAIL:-}

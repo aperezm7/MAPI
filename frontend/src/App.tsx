@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QueryRail from "./QueryRail";
+import YearRange from "./YearRange";
 import MapView, { type MapViewHandle } from "./MapView";
 import RecordPanel from "./RecordPanel";
-import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestTaxon, triggerDownload } from "./api";
-import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate } from "./types";
+import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestPlace, suggestTaxon, triggerDownload } from "./api";
+import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate, type YearCount } from "./types";
 import { readQueryFromUrl, writeQueryToUrl } from "./urlState";
+
+function clampedYearWindow(bins: YearCount[], time: MapQuery["time"]): { start: number; end: number } {
+  const first = bins[0].year;
+  const last = bins[bins.length - 1].year;
+  const start = Math.min(last, Math.max(time?.yearMin ?? first, first));
+  const end = Math.min(last, Math.max(time?.yearMax ?? last, first));
+  return start <= end ? { start, end } : { start: end, end: start };
+}
 
 export default function App() {
   const [query, setQuery] = useState<MapQuery>(() => readQueryFromUrl() ?? emptyQuery());
@@ -22,23 +31,43 @@ export default function App() {
   const [iucn, setIucn] = useState<IucnStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [taxonError, setTaxonError] = useState<string | null>(null);
+  const [placeError, setPlaceError] = useState<string | null>(null);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"qgis" | "gbif" | null>(null);
   const mapRef = useRef<MapViewHandle>(null);
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
   useEffect(() => {
     writeQueryToUrl(query);
   }, [query]);
 
-  useEffect(() => {
+  function refreshNlStatus() {
     fetchNlStatus()
       .then(setNlStatus)
       .catch(() => setNlStatus(null));
-  }, []);
+  }
 
-  const maxHist = useMemo(
-    () => Math.max(1, ...(mapData?.histogram.map((h) => h.count) ?? [1])),
-    [mapData],
-  );
+  useEffect(refreshNlStatus, []);
+
+  function commitYearWindow(start: number, end: number) {
+    if (!mapData?.histogram.length) return;
+    const first = mapData.histogram[0].year;
+    const last = mapData.histogram[mapData.histogram.length - 1].year;
+    const yearMin = start <= first ? null : start;
+    const yearMax = end >= last ? null : end;
+    const applied = mapData.query.time;
+    const unchanged =
+      (applied?.yearMin ?? first) === start &&
+      (applied?.yearMax ?? last) === end &&
+      (queryRef.current.time?.yearMin ?? null) === yearMin &&
+      (queryRef.current.time?.yearMax ?? null) === yearMax;
+    if (unchanged) return;
+    const next = { ...queryRef.current, time: { ...queryRef.current.time, yearMin, yearMax } };
+    setQuery(next);
+    void compile(next);
+  }
 
   async function applyResolved(next: MapQuery, extras?: {
     taxonCandidates?: TaxonCandidate[];
@@ -55,32 +84,79 @@ export default function App() {
     if (extras?.warnings?.length) setError(extras.warnings.join(" "));
   }
 
-  async function onSuggest(q: string) {
+  async function onSuggest(q: string, rankHint?: string | null) {
+    const name = q.trim();
+    if (!name) {
+      setTaxonError("Type a taxon name first.");
+      return;
+    }
     setLoading(true);
-    setError(null);
+    setTaxonError(null);
     try {
-      const data = await suggestTaxon(q);
+      const data = await suggestTaxon(name, rankHint);
       setTaxonCandidates(data.candidates);
-      setTaxonNeeds(data.needsDisambiguation);
-      if (data.candidates[0]) {
-        const top = data.candidates[0];
-        setQuery((prev) => ({
-          ...prev,
-          taxon: {
-            ...prev.taxon,
-            q,
-            gbifKey: data.needsDisambiguation ? prev.taxon?.gbifKey ?? null : top.gbifKey,
-            scientificName: top.scientificName,
-            canonicalName: top.canonicalName,
-            rank: top.rank,
-          },
-        }));
+      setTaxonNeeds(data.needsDisambiguation && data.candidates.length > 0);
+      if (!data.candidates.length) {
+        setQuery((prev) => ({ ...prev, taxon: { q, rankHint: rankHint ?? prev.taxon?.rankHint } }));
+        setTaxonError(data.warnings[0] ?? `No GBIF taxon matches “${name}”.`);
+        return;
       }
+      if (data.warnings.length) setTaxonError(data.warnings.join(" "));
+      if (!data.needsDisambiguation) onPickTaxon(data.candidates[0], q, data.warnings);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Taxon lookup failed");
+      setTaxonError(err instanceof Error ? err.message : "Taxon lookup failed");
     } finally {
       setLoading(false);
     }
+  }
+
+  function onPickTaxon(candidate: TaxonCandidate, typed?: string, warnings: string[] = []) {
+    setQuery((prev) => ({
+      ...prev,
+      taxon: {
+        q: typed ?? candidate.canonicalName ?? candidate.scientificName,
+        rankHint: prev.taxon?.rankHint,
+        gbifKey: candidate.gbifKey,
+        scientificName: candidate.scientificName,
+        canonicalName: candidate.canonicalName,
+        rank: candidate.rank,
+      },
+    }));
+    setTaxonCandidates((prev) => (prev.some((c) => c.gbifKey === candidate.gbifKey) ? prev : [candidate]));
+    setTaxonNeeds(false);
+    setTaxonError(warnings.length ? warnings.join(" ") : null);
+  }
+
+  async function onResolvePlace() {
+    const name = (query.place?.q ?? "").trim();
+    if (!name) {
+      setPlaceError("Type a country name or ISO code first.");
+      return;
+    }
+    setLoading(true);
+    setPlaceError(null);
+    try {
+      const data = await suggestPlace(name);
+      setPlaceCandidates(data.candidates);
+      if (!data.query?.iso2) {
+        setPlaceNeeds(false);
+        setPlaceError(data.warnings[0] ?? `No country matches “${name}”.`);
+        return;
+      }
+      setQuery((prev) => ({ ...prev, place: { ...data.query, q: prev.place?.q ?? name } }));
+      setPlaceNeeds(data.needsDisambiguation);
+    } catch (err) {
+      setPlaceError(err instanceof Error ? err.message : "Place lookup failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function onPickPlace(candidate: PlaceCandidate) {
+    setQuery((prev) => ({ ...prev, place: { q: candidate.title, kind: "country", iso2: candidate.iso2, title: candidate.title } }));
+    setPlaceCandidates((prev) => (prev.some((c) => c.iso2 === candidate.iso2) ? prev : [candidate]));
+    setPlaceNeeds(false);
+    setPlaceError(null);
   }
 
   async function compile(target: MapQuery = query) {
@@ -141,6 +217,7 @@ export default function App() {
       await applyResolved(planned.resolve.query, planned.resolve);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Planner unavailable");
+      refreshNlStatus();
     } finally {
       setLoading(false);
     }
@@ -171,34 +248,49 @@ export default function App() {
   }
 
   function exportPng() {
-    const dataUrl = mapRef.current?.exportPng();
-    if (!dataUrl) {
-      setDownloadMsg("Map is not ready to export yet.");
-      return;
+    try {
+      const dataUrl = mapRef.current?.exportPng();
+      if (!dataUrl) {
+        setDownloadMsg("Map is not ready to export yet.");
+        return;
+      }
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = "mapi-map.png";
+      link.click();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "PNG export failed";
+      setDownloadMsg(
+        /taint|security/i.test(message)
+          ? "PNG export was blocked by the browser (cross-origin basemap tiles). Use GeoJSON or QGIS export instead."
+          : message,
+      );
     }
-    const link = document.createElement("a");
-    link.href = dataUrl;
-    link.download = "mapi-map.png";
-    link.click();
   }
 
   async function exportQgis() {
     setDownloadMsg(null);
+    setBusyAction("qgis");
     try {
       await downloadQgisPackage(query);
       setDownloadMsg("Downloaded a QGIS package (GeoJSON + PyQGIS loader). Open it in QGIS Desktop.");
     } catch (err) {
       setDownloadMsg(err instanceof Error ? err.message : "QGIS export failed");
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function onDownload() {
     setDownloadMsg(null);
+    setBusyAction("gbif");
     try {
       const result = await requestGbifDownload(query);
       setDownloadMsg(result.message || (result.available ? `Queued ${result.key}` : "Download unavailable"));
     } catch (err) {
       setDownloadMsg(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -215,10 +307,16 @@ export default function App() {
         nlPrompt={nlPrompt}
         setNlPrompt={setNlPrompt}
         nlNotes={nlNotes}
-        onSuggest={onSuggest}
+        onSuggest={(q, rankHint) => void onSuggest(q, rankHint)}
+        onResolvePlace={() => void onResolvePlace()}
+        onPickTaxon={(c) => onPickTaxon(c)}
+        onPickPlace={onPickPlace}
+        taxonError={taxonError}
+        placeError={placeError}
+        clearLookupError={(field) => (field === "taxon" ? setTaxonError(null) : setPlaceError(null))}
         onMap={() => void compile()}
         onPlan={() => void onPlan()}
-        onConfirmNl={() => nlDraft && void compile(nlDraft)}
+        onConfirmNl={() => void compile()}
         hasNlDraft={Boolean(nlDraft)}
         nlStatus={nlStatus}
       />
@@ -238,48 +336,15 @@ export default function App() {
                 {mapData.sampleOmittedSensitive ? ` · omitted ${mapData.sampleOmittedSensitive} sensitive points` : ""}
               </div>
               {mapData.histogram.length > 0 ? (
-                <>
-                  <div className="histogram" title="GBIF occurrence counts by year">
-                    {mapData.histogram.map((bin) => (
-                      <span key={bin.year} style={{ height: `${Math.max(4, (bin.count / maxHist) * 100)}%` }} title={`${bin.year}: ${bin.count}`} />
-                    ))}
-                  </div>
-                  <div className="row">
-                    <label className="field">
-                      Slider from
-                      <input
-                        type="range"
-                        min={mapData.histogram[0].year}
-                        max={mapData.histogram[mapData.histogram.length - 1].year}
-                        value={query.time?.yearMin ?? mapData.histogram[0].year}
-                        onChange={(e) =>
-                          setQuery({
-                            ...query,
-                            time: { ...query.time, yearMin: Number(e.target.value) },
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      Slider to
-                      <input
-                        type="range"
-                        min={mapData.histogram[0].year}
-                        max={mapData.histogram[mapData.histogram.length - 1].year}
-                        value={query.time?.yearMax ?? mapData.histogram[mapData.histogram.length - 1].year}
-                        onChange={(e) =>
-                          setQuery({
-                            ...query,
-                            time: { ...query.time, yearMax: Number(e.target.value) },
-                          })
-                        }
-                      />
-                    </label>
-                  </div>
-                  <button type="button" className="linkish" onClick={() => void compile()}>
-                    Apply year window
-                  </button>
-                </>
+                <YearRange
+                  bins={mapData.histogram}
+                  {...clampedYearWindow(mapData.histogram, query.time)}
+                  disabled={loading}
+                  onChange={(start, end) =>
+                    setQuery((prev) => ({ ...prev, time: { ...prev.time, yearMin: start, yearMax: end } }))
+                  }
+                  onCommit={commitYearWindow}
+                />
               ) : null}
               <div className="actions">
                 <button type="button" className="secondary" onClick={exportSample} disabled={!mapData.sample.features.length}>
@@ -291,11 +356,11 @@ export default function App() {
                 <button type="button" className="secondary" onClick={exportPng}>
                   Export map PNG
                 </button>
-                <button type="button" className="secondary" onClick={() => void exportQgis()}>
-                  Export QGIS package
+                <button type="button" className="secondary" onClick={() => void exportQgis()} disabled={busyAction !== null}>
+                  {busyAction === "qgis" ? "Exporting QGIS…" : "Export QGIS package"}
                 </button>
-                <button type="button" className="secondary" onClick={() => void onDownload()}>
-                  Request GBIF download
+                <button type="button" className="secondary" onClick={() => void onDownload()} disabled={busyAction !== null}>
+                  {busyAction === "gbif" ? "Requesting…" : "Request GBIF download"}
                 </button>
               </div>
               {downloadMsg ? <div className="empty">{downloadMsg}</div> : null}
