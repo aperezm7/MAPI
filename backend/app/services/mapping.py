@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
 
 from app.compile import (
+    CURRENT_YEAR,
     choose_mode,
     empty_feature_collection,
     gbif_attribution,
@@ -17,6 +19,28 @@ from app.compile import (
 from app.models import MapQuery, MapResponse, TileSpec, YearCount
 from app.services import gbif
 from app.services.shapes import shape_for_place
+
+
+def histogram_from_facets(facets: list[dict[str, Any]] | None) -> list[YearCount]:
+    """Full GBIF year counts, including years with no records between the first and last hit."""
+    by_year: dict[int, int] = {}
+    for facet in facets or []:
+        if str(facet.get("field") or "").upper() != "YEAR":
+            continue
+        for row in facet.get("counts") or []:
+            try:
+                year = int(row.get("name"))
+                count = int(row.get("count") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 1000 <= year <= CURRENT_YEAR and count > 0:
+                by_year[year] = count
+    if not by_year:
+        return []
+    first, last = min(by_year), max(by_year)
+    if last - first > 400:
+        return [YearCount(year=year, count=by_year[year]) for year in sorted(by_year)]
+    return [YearCount(year=year, count=by_year.get(year, 0)) for year in range(first, last + 1)]
 
 
 def _histogram_from_records(records: list[dict[str, Any]]) -> list[YearCount]:
@@ -45,6 +69,21 @@ async def _boundary_fields(
     return boundary, attribution
 
 
+async def _year_histogram(client: httpx.AsyncClient, query: MapQuery) -> list[YearCount]:
+    """Year counts for the query with the year window removed, so the slider keeps the full span."""
+    untimed = query.model_copy(update={"time": None})
+    params = occurrence_params(untimed)
+    if "taxonKey" not in params and "country" not in params and "geometry" not in params:
+        return []
+    params["facet"] = "year"
+    params["facetLimit"] = 1000
+    try:
+        page = await gbif.occurrence_search(client, params, limit=0)
+    except Exception:
+        return []
+    return histogram_from_facets(page.get("facets") if isinstance(page, dict) else None)
+
+
 async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse:
     warnings: list[str] = []
     params = occurrence_params(query)
@@ -64,7 +103,10 @@ async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse
         )
 
     page_size = min(query.map.sampleLimit, 300)
-    page = await gbif.occurrence_search(client, params, limit=page_size, offset=0)
+    page, facet_histogram = await asyncio.gather(
+        gbif.occurrence_search(client, params, limit=page_size, offset=0),
+        _year_histogram(client, query),
+    )
     count = int(page.get("count") or 0)
     records = list(page.get("results") or [])
     truncated = count > len(records)
@@ -84,8 +126,8 @@ async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse
             if feature:
                 sample_features.append(feature)
 
-    histogram = _histogram_from_records(records)
-    if truncated:
+    histogram = facet_histogram or _histogram_from_records(records)
+    if not facet_histogram and truncated and histogram:
         warnings.append("Histogram reflects the inspectable sample, not the full GBIF count.")
 
     if omitted_sensitive:

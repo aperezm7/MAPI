@@ -50,22 +50,35 @@ class RedisCache(Cache):
 
 
 _cache: Cache | None = None
-_lock = asyncio.Lock()
+_lock: asyncio.Lock | None = None
+_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _cache_lock() -> asyncio.Lock:
+    """A lock bound to the running loop. Test clients spin up a new loop per test."""
+    global _lock, _lock_loop
+    loop = asyncio.get_running_loop()
+    if _lock is None or _lock_loop is not loop:
+        _lock = asyncio.Lock()
+        _lock_loop = loop
+    return _lock
 
 
 def reset_cache_for_tests() -> None:
-    global _cache, _redis, _redis_failed
+    global _cache, _redis, _redis_failed, _lock, _lock_loop
     _memory.clear()
     _cache = None
     _redis = None
     _redis_failed = False
+    _lock = None
+    _lock_loop = None
 
 
 async def get_cache() -> Cache:
     global _cache, _redis, _redis_failed
     if _cache is not None:
         return _cache
-    async with _lock:
+    async with _cache_lock():
         if _cache is not None:
             return _cache
         settings = get_settings()

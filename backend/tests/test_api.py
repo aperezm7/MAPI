@@ -175,6 +175,72 @@ def test_map_with_resolved_jaguar(client: TestClient):
 
 
 @respx.mock
+def test_map_histogram_uses_full_year_facet(client: TestClient):
+    respx.get("https://api.gbif.org/v1/species/2481907").mock(
+        return_value=Response(200, json={"key": 2481907, "canonicalName": "Vultur gryphus", "rank": "SPECIES"})
+    )
+    respx.get("https://api.gbif.org/v1/enumeration/country").mock(
+        return_value=Response(200, json=[{"iso2": "CR", "iso3": "CRI", "title": "Costa Rica"}])
+    )
+    mock_geoboundaries_cri()
+
+    seen: list[str] = []
+
+    def search(request):
+        seen.append(str(request.url))
+        if "facet=year" in str(request.url):
+            return Response(
+                200,
+                json={
+                    "count": 40,
+                    "results": [],
+                    "facets": [
+                        {
+                            "field": "YEAR",
+                            "counts": [{"name": "2014", "count": 10}, {"name": "2016", "count": 30}],
+                        }
+                    ],
+                },
+            )
+        return Response(
+            200,
+            json={
+                "count": 1,
+                "results": [
+                    {
+                        "gbifID": 111,
+                        "decimalLatitude": 9.7,
+                        "decimalLongitude": -83.9,
+                        "year": 2020,
+                        "issues": [],
+                    }
+                ],
+            },
+        )
+
+    respx.get("https://api.gbif.org/v1/occurrence/search").mock(side_effect=search)
+    response = client.post(
+        "/v1/map",
+        json={
+            "taxon": {"gbifKey": 2481907},
+            "place": {"iso2": "CR"},
+            "time": {"yearMin": 2015, "yearMax": 2016},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [(item["year"], item["count"]) for item in body["histogram"]] == [
+        (2014, 10),
+        (2015, 0),
+        (2016, 30),
+    ]
+    assert not any("inspectable sample" in warning for warning in body["warnings"])
+    facet_urls = [url for url in seen if "facet=year" in url]
+    assert facet_urls and "eventDate" not in facet_urls[0]
+    assert any("eventDate" in url for url in seen)
+
+
+@respx.mock
 def test_iucn_without_token(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     class Dummy:
         iucn_api_token = None

@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QueryRail from "./QueryRail";
+import YearRange from "./YearRange";
 import MapView, { type MapViewHandle } from "./MapView";
 import RecordPanel from "./RecordPanel";
 import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestPlace, suggestTaxon, triggerDownload } from "./api";
-import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate } from "./types";
+import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate, type YearCount } from "./types";
 import { readQueryFromUrl, writeQueryToUrl } from "./urlState";
+
+function clampedYearWindow(bins: YearCount[], time: MapQuery["time"]): { start: number; end: number } {
+  const first = bins[0].year;
+  const last = bins[bins.length - 1].year;
+  const start = Math.min(last, Math.max(time?.yearMin ?? first, first));
+  const end = Math.min(last, Math.max(time?.yearMax ?? last, first));
+  return start <= end ? { start, end } : { start: end, end: start };
+}
 
 export default function App() {
   const [query, setQuery] = useState<MapQuery>(() => readQueryFromUrl() ?? emptyQuery());
@@ -27,6 +36,8 @@ export default function App() {
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"qgis" | "gbif" | null>(null);
   const mapRef = useRef<MapViewHandle>(null);
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
   useEffect(() => {
     writeQueryToUrl(query);
@@ -40,10 +51,23 @@ export default function App() {
 
   useEffect(refreshNlStatus, []);
 
-  const maxHist = useMemo(
-    () => Math.max(1, ...(mapData?.histogram.map((h) => h.count) ?? [1])),
-    [mapData],
-  );
+  function commitYearWindow(start: number, end: number) {
+    if (!mapData?.histogram.length) return;
+    const first = mapData.histogram[0].year;
+    const last = mapData.histogram[mapData.histogram.length - 1].year;
+    const yearMin = start <= first ? null : start;
+    const yearMax = end >= last ? null : end;
+    const applied = mapData.query.time;
+    const unchanged =
+      (applied?.yearMin ?? first) === start &&
+      (applied?.yearMax ?? last) === end &&
+      (queryRef.current.time?.yearMin ?? null) === yearMin &&
+      (queryRef.current.time?.yearMax ?? null) === yearMax;
+    if (unchanged) return;
+    const next = { ...queryRef.current, time: { ...queryRef.current.time, yearMin, yearMax } };
+    setQuery(next);
+    void compile(next);
+  }
 
   async function applyResolved(next: MapQuery, extras?: {
     taxonCandidates?: TaxonCandidate[];
@@ -312,48 +336,15 @@ export default function App() {
                 {mapData.sampleOmittedSensitive ? ` · omitted ${mapData.sampleOmittedSensitive} sensitive points` : ""}
               </div>
               {mapData.histogram.length > 0 ? (
-                <>
-                  <div className="histogram" title="GBIF occurrence counts by year">
-                    {mapData.histogram.map((bin) => (
-                      <span key={bin.year} style={{ height: `${Math.max(4, (bin.count / maxHist) * 100)}%` }} title={`${bin.year}: ${bin.count}`} />
-                    ))}
-                  </div>
-                  <div className="row">
-                    <label className="field">
-                      Slider from
-                      <input
-                        type="range"
-                        min={mapData.histogram[0].year}
-                        max={mapData.histogram[mapData.histogram.length - 1].year}
-                        value={query.time?.yearMin ?? mapData.histogram[0].year}
-                        onChange={(e) =>
-                          setQuery({
-                            ...query,
-                            time: { ...query.time, yearMin: Number(e.target.value) },
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      Slider to
-                      <input
-                        type="range"
-                        min={mapData.histogram[0].year}
-                        max={mapData.histogram[mapData.histogram.length - 1].year}
-                        value={query.time?.yearMax ?? mapData.histogram[mapData.histogram.length - 1].year}
-                        onChange={(e) =>
-                          setQuery({
-                            ...query,
-                            time: { ...query.time, yearMax: Number(e.target.value) },
-                          })
-                        }
-                      />
-                    </label>
-                  </div>
-                  <button type="button" className="linkish" onClick={() => void compile()} disabled={loading}>
-                    Apply year window
-                  </button>
-                </>
+                <YearRange
+                  bins={mapData.histogram}
+                  {...clampedYearWindow(mapData.histogram, query.time)}
+                  disabled={loading}
+                  onChange={(start, end) =>
+                    setQuery((prev) => ({ ...prev, time: { ...prev.time, yearMin: start, yearMax: end } }))
+                  }
+                  onCommit={commitYearWindow}
+                />
               ) : null}
               <div className="actions">
                 <button type="button" className="secondary" onClick={exportSample} disabled={!mapData.sample.features.length}>
