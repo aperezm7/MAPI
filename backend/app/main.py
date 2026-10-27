@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.accounts import ensure_anonymous
 from app.config import get_settings
 from app.routers import router
 from app.services.gbif import GbifError
@@ -13,6 +14,7 @@ from app.services.gbif import GbifError
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    ensure_anonymous()
     app.state.http = httpx.AsyncClient(
         headers={"User-Agent": settings.gbif_user_agent},
         follow_redirects=True,

@@ -170,3 +170,26 @@ class DownloadResponse(BaseModel):
     key: str | None = None
     statusUrl: str | None = None
     message: str | None = None
+
+
+class ClientCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    budget: float | None = Field(default=None, ge=0)
+    mapsPerDay: int | None = Field(default=None, ge=0)
+    plansPerDay: int | None = Field(default=None, ge=0)
+    requestsPerMinute: int | None = Field(default=None, ge=1, le=600)
+
+
+class ClientUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    active: bool | None = None
+    budget: float | None = Field(default=None, ge=0)
+    mapsPerDay: int | None = Field(default=None, ge=0)
+    plansPerDay: int | None = Field(default=None, ge=0)
+    requestsPerMinute: int | None = Field(default=None, ge=1, le=600)
+
+
+class GbifConnect(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=200)
+    email: str | None = Field(default=None, max_length=200)

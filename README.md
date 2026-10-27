@@ -70,6 +70,36 @@ ollama pull gemma4 && ollama serve
 
 `GET /v1/nl/status` reports the active provider and model, and whether it is ready (key present, or Ollama reachable with the model pulled). Keys never leave the server. Bad keys, unknown models, rate limits, and unreachable endpoints come back from `POST /v1/nl/plan` as HTTP 503 with a readable message.
 
+## Clients, quotas, and GBIF accounts
+
+Each system client has an API key, a monthly credit budget, and daily caps. Redis counts requests per minute and maps/plans per day when `REDIS_URL` is set; otherwise the API process keeps those counters in memory. Credits and the query log live in SQLite (`DATABASE_PATH`, default `data/mapi.sqlite`) and survive a Redis flush.
+
+| Call | Default cost |
+| --- | --- |
+| Draw map | 1 credit |
+| Natural-language plan | 2 credits |
+| Resolve | 0.1 |
+| QGIS export | 1 |
+| iNaturalist overlay | 0.2 |
+| GBIF download request | 5 |
+
+Defaults are 100 credits per month, 100 maps/day, 40 plans/day, and 30 requests/minute. `COST_*` and `QUOTA_*` change them. A new client can override the budget and caps. Past the budget the API returns **402**; past a rate or daily cap it returns **429**.
+
+With `AUTH_REQUIRED=false` (the default) the API stays open and logs activity on an unlimited "Open access" client. Set `AUTH_REQUIRED=true` and every `/v1` route except `GET /v1/account/status` requires `Authorization: Bearer <api key>`.
+
+```bash
+export MAPI_ADMIN_TOKEN=choose-a-long-token
+export MAPI_SECRET_KEY=choose-another-long-token   # encrypts stored GBIF passwords
+curl -s -X POST http://127.0.0.1:8000/v1/clients \
+  -H "X-Admin-Token: $MAPI_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"lab","budget":100}'
+```
+
+The response includes `apiKey` once. Paste it into the Account card (it stays in this browser). List or change clients with `GET` and `PATCH /v1/clients/{id}` and the same admin token.
+
+GBIF has no OAuth for occurrence downloads. Connect a GBIF username and password in the Account card; MAPI checks them with `GET /v1/user/login` and then sends that client's downloads as that user. The password is encrypted at rest and is not returned by the API. A server-wide `GBIF_USERNAME` / `GBIF_PASSWORD` is the fallback when the client has not connected an account.
+
 ## Docker
 
 ```bash

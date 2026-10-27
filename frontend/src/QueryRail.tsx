@@ -1,4 +1,5 @@
 import { FormEvent, useMemo } from "react";
+import AccountCard from "./AccountCard";
 import Autocomplete from "./Autocomplete";
 import { autocompleteTaxon, suggestPlace } from "./api";
 import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
@@ -100,6 +101,8 @@ export default function QueryRail({
         <h1>MAPI</h1>
         <p>Species APIs, compiled into a map query — never guessed coordinates.</p>
       </div>
+
+      <AccountCard />
 
       <section className="card">
         <h2>Natural language</h2>
