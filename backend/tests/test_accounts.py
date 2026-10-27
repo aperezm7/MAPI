@@ -12,6 +12,44 @@ def _client(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
     get_settings.cache_clear()
 
 
+def test_auth_bootstraps_one_team_client(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    monkeypatch.delenv("MAPI_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("MAPI_SECRET_KEY", raising=False)
+    get_settings.cache_clear()
+    from app.accounts import ANONYMOUS_ID, list_clients
+    from app.bootstrap import bootstrap_team_client, prepare_runtime
+    from app.db import reset_db_for_tests
+
+    reset_db_for_tests()
+    prepare_runtime()
+    settings = get_settings()
+    assert settings.auth_required is True
+    assert settings.mapi_admin_token
+    assert settings.mapi_secret_key
+    admin = settings.mapi_admin_token
+    bootstrap_team_client()
+    key = (tmp_path / "team-api-key.txt").read_text().strip()
+    assert key.startswith("mapi_")
+    bootstrap_team_client()
+    prepare_runtime()
+    assert (tmp_path / "team-api-key.txt").read_text().strip() == key
+    assert get_settings().mapi_admin_token == admin
+    named = [item for item in list_clients() if item.id != ANONYMOUS_ID]
+    assert [item.name for item in named] == ["team"]
+    assert not (tmp_path / "secrets.env").read_text().startswith("GBIF")
+
+
+def test_open_access_does_not_bootstrap(tmp_path):
+    get_settings.cache_clear()
+    from app.bootstrap import bootstrap_team_client, prepare_runtime
+
+    prepare_runtime()
+    bootstrap_team_client()
+    assert not (tmp_path / "secrets.env").exists()
+    assert not (tmp_path / "team-api-key.txt").exists()
+
+
 def test_open_access_logs_a_resolve(client: TestClient):
     status = client.get("/v1/account/status")
     assert status.status_code == 200

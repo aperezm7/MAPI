@@ -85,7 +85,7 @@ Each system client has an API key, a monthly credit budget, and daily caps. Redi
 
 Defaults are 100 credits per month, 100 maps/day, 40 plans/day, and 30 requests/minute. `COST_*` and `QUOTA_*` change them. A new client can override the budget and caps. Past the budget the API returns **402**; past a rate or daily cap it returns **429**.
 
-With `AUTH_REQUIRED=false` (the default) the API stays open and logs activity on an unlimited "Open access" client. Set `AUTH_REQUIRED=true` and every `/v1` route except `GET /v1/account/status` requires `Authorization: Bearer <api key>`.
+`uvicorn` on its own keeps `AUTH_REQUIRED=false`, so the API stays open and logs activity on an unlimited "Open access" client. Docker Compose sets `AUTH_REQUIRED=true`. Every `/v1` route except `GET /v1/account/status` then requires `Authorization: Bearer <api key>`.
 
 ```bash
 export MAPI_ADMIN_TOKEN=choose-a-long-token
@@ -106,7 +106,15 @@ GBIF has no OAuth for occurrence downloads. Connect a GBIF username and password
 docker compose up --build
 ```
 
-UI at http://localhost:8080, API at http://localhost:8000.
+The stack turns authentication on. If `MAPI_ADMIN_TOKEN` and `MAPI_SECRET_KEY` are empty, the API writes them once into the data volume (`secrets.env`, mode 600). The first boot also creates one client named `team` and writes its API key to `team-api-key.txt` in that volume. Further teams are `POST /v1/clients` with the admin token. `GBIF_USERNAME` and `GBIF_PASSWORD` are left empty; connect a GBIF login on the team client instead of sharing one server password.
+
+```bash
+docker compose exec api cat /app/data/team-api-key.txt
+```
+
+The app nginx is on http://localhost:8080. A second nginx terminates HTTPS on https://localhost:8443 with a self-signed certificate for localhost (browsers warn until you trust `mapi.crt` or replace the files in the `mapi-tls` volume). Both proxies wait 240 seconds for `/v1`, which covers an Ollama plan allowed 180 seconds. `CORS_ORIGINS` includes `http://localhost:8080` and `https://localhost:8443`.
+
+API without the proxy: http://localhost:8000. Redis: localhost:6379.
 
 ## Optional environment
 
