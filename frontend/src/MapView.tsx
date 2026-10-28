@@ -264,6 +264,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, ina
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const clusterRef = useRef<boolean | null>(null);
+  const fittedSampleRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
@@ -412,10 +413,10 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, ina
       const sampleSource = map.getSource("gbif-sample") as maplibregl.GeoJSONSource | undefined;
       sampleSource?.setData(mapData?.sample ?? { type: "FeatureCollection", features: [] });
       syncSampleVisibility(map, mapData?.style, pointDisplay);
-      if (mapData?.sample?.features?.length) {
-        fitCollection(map, mapData.sample, 8);
-      } else if (boundary.features?.length) {
-        fitCollection(map, boundary, 7);
+      if (mapData?.sample && fittedSampleRef.current !== mapData.sample) {
+        if (mapData.sample.features?.length) fitCollection(map, mapData.sample, 8);
+        else if (boundary.features?.length) fitCollection(map, boundary, 7);
+        fittedSampleRef.current = mapData.sample;
       }
     };
 
