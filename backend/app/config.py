@@ -76,6 +76,21 @@ class Settings(BaseSettings):
     gbif_download_email: str | None = None
     cors_origins: str = "http://localhost:5173,http://localhost:8080,http://127.0.0.1:5173,http://localhost:5175,http://127.0.0.1:5175"
 
+    auth_required: bool = False
+    mapi_admin_token: str | None = None
+    mapi_secret_key: str | None = None
+    database_path: str = "data/mapi.sqlite"
+    quota_maps_per_day: int = 100
+    quota_plans_per_day: int = 40
+    quota_requests_per_minute: int = 30
+    default_budget: float = 100
+    cost_map: float = 1
+    cost_plan: float = 2
+    cost_resolve: float = 0.1
+    cost_download: float = 5
+    cost_export: float = 1
+    cost_inat: float = 0.2
+
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 

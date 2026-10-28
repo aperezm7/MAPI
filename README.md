@@ -70,13 +70,51 @@ ollama pull gemma4 && ollama serve
 
 `GET /v1/nl/status` reports the active provider and model, and whether it is ready (key present, or Ollama reachable with the model pulled). Keys never leave the server. Bad keys, unknown models, rate limits, and unreachable endpoints come back from `POST /v1/nl/plan` as HTTP 503 with a readable message.
 
+## Clients, quotas, and GBIF accounts
+
+Each system client has an API key, a monthly credit budget, and daily caps. Redis counts requests per minute and maps/plans per day when `REDIS_URL` is set; otherwise the API process keeps those counters in memory. Credits and the query log live in SQLite (`DATABASE_PATH`, default `data/mapi.sqlite`) and survive a Redis flush.
+
+| Call | Default cost |
+| --- | --- |
+| Draw map | 1 credit |
+| Natural-language plan | 2 credits |
+| Resolve | 0.1 |
+| QGIS export | 1 |
+| iNaturalist overlay | 0.2 |
+| GBIF download request | 5 |
+
+Defaults are 100 credits per month, 100 maps/day, 40 plans/day, and 30 requests/minute. `COST_*` and `QUOTA_*` change them. A new client can override the budget and caps. Past the budget the API returns **402**; past a rate or daily cap it returns **429**.
+
+`uvicorn` on its own keeps `AUTH_REQUIRED=false`, so the API stays open and logs activity on an unlimited "Open access" client. Docker Compose sets `AUTH_REQUIRED=true`. Every `/v1` route except `GET /v1/account/status` then requires `Authorization: Bearer <api key>`.
+
+```bash
+export MAPI_ADMIN_TOKEN=choose-a-long-token
+export MAPI_SECRET_KEY=choose-another-long-token   # encrypts stored GBIF passwords
+curl -s -X POST http://127.0.0.1:8000/v1/clients \
+  -H "X-Admin-Token: $MAPI_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"lab","budget":100}'
+```
+
+The response includes `apiKey` once. Paste it into the Account card (it stays in this browser). List or change clients with `GET` and `PATCH /v1/clients/{id}` and the same admin token.
+
+GBIF has no OAuth for occurrence downloads. Connect a GBIF username and password in the Account card; MAPI checks them with `GET /v1/user/login` and then sends that client's downloads as that user. The password is encrypted at rest and is not returned by the API. A server-wide `GBIF_USERNAME` / `GBIF_PASSWORD` is the fallback when the client has not connected an account.
+
 ## Docker
 
 ```bash
 docker compose up --build
 ```
 
-UI at http://localhost:8080, API at http://localhost:8000.
+The stack turns authentication on. If `MAPI_ADMIN_TOKEN` and `MAPI_SECRET_KEY` are empty, the API writes them once into the data volume (`secrets.env`, mode 600). The first boot also creates one client named `team` and writes its API key to `team-api-key.txt` in that volume. Further teams are `POST /v1/clients` with the admin token. `GBIF_USERNAME` and `GBIF_PASSWORD` are left empty; connect a GBIF login on the team client instead of sharing one server password.
+
+```bash
+docker compose exec api cat /app/data/team-api-key.txt
+```
+
+The app nginx is on http://localhost:8080. A second nginx terminates HTTPS on https://localhost:8443 with a self-signed certificate for localhost (browsers warn until you trust `mapi.crt` or replace the files in the `mapi-tls` volume). Both proxies wait 240 seconds for `/v1`, which covers an Ollama plan allowed 180 seconds. `CORS_ORIGINS` includes `http://localhost:8080` and `https://localhost:8443`.
+
+API without the proxy: http://localhost:8000. Redis: localhost:6379.
 
 ## Optional environment
 

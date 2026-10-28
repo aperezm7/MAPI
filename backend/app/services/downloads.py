@@ -41,31 +41,47 @@ def mapquery_to_predicate(request: DownloadRequest) -> dict[str, Any]:
     return {"type": "and", "predicates": predicates}
 
 
-async def create_download(client: httpx.AsyncClient, request: DownloadRequest) -> DownloadResponse:
+_UNSET = object()
+
+
+async def create_download(
+    client: httpx.AsyncClient,
+    request: DownloadRequest,
+    *,
+    username: str | None | object = _UNSET,
+    password: str | None | object = _UNSET,
+    email: str | None | object = _UNSET,
+) -> DownloadResponse:
     settings = get_settings()
-    if not settings.gbif_username or not settings.gbif_password:
+    if username is _UNSET:
+        username = settings.gbif_username
+    if password is _UNSET:
+        password = settings.gbif_password
+    if email is _UNSET:
+        email = settings.gbif_download_email
+    if not username or not password:
         return DownloadResponse(
             available=False,
-            message="Set GBIF_USERNAME and GBIF_PASSWORD to request a full GBIF occurrence download.",
+            message="Connect a GBIF account, or set GBIF_USERNAME and GBIF_PASSWORD, to request a full occurrence download.",
         )
     if not request.query.taxon or not request.query.taxon.gbifKey:
         return DownloadResponse(available=False, message="Resolve a taxon before requesting a download.")
 
     payload: dict[str, Any] = {
-        "creator": settings.gbif_username,
-        "sendNotification": bool(settings.gbif_download_email),
+        "creator": username,
+        "sendNotification": bool(email),
         "format": request.format,
         "predicate": mapquery_to_predicate(request),
     }
-    if settings.gbif_download_email:
-        payload["notificationAddresses"] = [settings.gbif_download_email]
+    if email:
+        payload["notificationAddresses"] = [email]
 
     await gbif_limiter.acquire()
     response = await client.post(
         f"{settings.gbif_base_url}/v1/occurrence/download/request",
         json=payload,
         headers={"User-Agent": settings.gbif_user_agent},
-        auth=(settings.gbif_username, settings.gbif_password),
+        auth=(username, password),
         timeout=60.0,
     )
     if response.status_code >= 400:

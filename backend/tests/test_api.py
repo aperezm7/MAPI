@@ -7,9 +7,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 import httpx
 
-from app.cache import reset_cache_for_tests
 from app.config import get_settings
-from app.main import create_app
 
 
 TINY_CR = {
@@ -43,16 +41,6 @@ def mock_geoboundaries_cri() -> None:
         )
     )
     respx.get("https://example.test/CRI.geojson").mock(return_value=Response(200, json=TINY_CR))
-
-
-@pytest.fixture
-def client():
-    get_settings.cache_clear()
-    reset_cache_for_tests()
-    with TestClient(create_app()) as test_client:
-        yield test_client
-    reset_cache_for_tests()
-    get_settings.cache_clear()
 
 
 def test_health(client: TestClient):
