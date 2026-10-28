@@ -1,6 +1,18 @@
 export type IucnCode = "EX" | "EW" | "CR" | "EN" | "VU" | "NT" | "LC" | "DD" | "NE";
 export type MapMode = "tiles_plus_sample" | "points" | "tiles";
 export type MapStyle = "points" | "hex" | "heat";
+export type PointDisplay = "cluster" | "individual";
+
+export const TAXON_COLORS = [
+  "#b4532a",
+  "#1d4e89",
+  "#2f6b4f",
+  "#8a4b08",
+  "#6b3fa0",
+  "#0f6e6e",
+  "#9b3a4a",
+  "#3d5a40",
+];
 
 export interface TaxonQuery {
   q?: string | null;
@@ -21,6 +33,7 @@ export interface PlaceQuery {
 
 export interface MapQuery {
   taxon?: TaxonQuery | null;
+  taxa?: TaxonQuery[];
   place?: PlaceQuery | null;
   time?: { yearMin?: number | null; yearMax?: number | null } | null;
   conservation?: { iucn?: IucnCode[] } | null;
@@ -34,6 +47,7 @@ export interface MapQuery {
     sampleLimit?: number;
     style?: MapStyle;
     includeInat?: boolean;
+    pointDisplay?: PointDisplay;
   };
 }
 
@@ -168,6 +182,7 @@ export function emptyQuery(): MapQuery {
     time: { yearMin: 2015, yearMax: null },
     conservation: { iucn: [] },
     filters: { hasCoordinate: true, occurrenceStatus: "PRESENT" },
-    map: { mode: "tiles_plus_sample", sampleLimit: 300, style: "points", includeInat: false },
+    taxa: [],
+    map: { mode: "tiles_plus_sample", sampleLimit: 300, style: "points", includeInat: false, pointDisplay: "cluster" },
   };
 }

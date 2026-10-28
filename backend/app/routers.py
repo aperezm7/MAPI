@@ -26,6 +26,7 @@ from app.services import downloads, inat, iucn, llm
 from app.usage import admit, prices, settle, summarize_query
 from app.services.mapping import compile_map
 from app.services.qgis_export import build_qgis_zip, package_slug
+from app.compile import selected_taxa
 from app.services.resolve import autocomplete_taxa, load_countries, resolve_place, resolve_query, resolve_taxon, suggest_places
 from app.models import PlaceQuery, TaxonQuery
 
@@ -210,7 +211,7 @@ async def build_map(request: Request, query: MapQuery):
     client = request.app.state.http
     try:
         resolved = await resolve_query(client, query)
-        if resolved.taxonNeedsDisambiguation and (not query.taxon or not query.taxon.gbifKey):
+        if resolved.taxonNeedsDisambiguation and not selected_taxa(query):
             mapped = {
                 **resolved.model_dump(by_alias=True),
                 "count": 0,
@@ -318,7 +319,7 @@ async def export_qgis(request: Request, query: MapQuery):
     client = request.app.state.http
     try:
         resolved = await resolve_query(client, query)
-        if resolved.taxonNeedsDisambiguation and (not query.taxon or not query.taxon.gbifKey):
+        if resolved.taxonNeedsDisambiguation and not selected_taxa(query):
             raise HTTPException(status_code=409, detail="Pick a taxon match before exporting.")
         mapped = await compile_map(client, resolved.query)
         payload = build_qgis_zip(mapped)

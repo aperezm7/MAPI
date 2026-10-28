@@ -359,11 +359,26 @@ async def resolve_query(client: httpx.AsyncClient, query: MapQuery) -> ResolveRe
     taxon_needs = False
     place_needs = False
 
-    if query.taxon and (query.taxon.q or query.taxon.gbifKey or query.taxon.scientificName):
-        taxon, taxon_candidates, taxon_needs, taxon_warnings = await resolve_taxon(client, query.taxon)
+    resolved_taxa = []
+    for item in query.taxa:
+        if not (item.q or item.gbifKey or item.scientificName):
+            continue
+        taxon, candidates, needs, taxon_warnings = await resolve_taxon(client, item)
         warnings.extend(taxon_warnings)
+        taxon_candidates.extend(candidates)
+        taxon_needs = taxon_needs or needs
+        if taxon:
+            resolved_taxa.append(taxon)
+    resolved.taxa = resolved_taxa
+
+    if query.taxon and (query.taxon.q or query.taxon.gbifKey or query.taxon.scientificName):
+        taxon, candidates, needs, taxon_warnings = await resolve_taxon(client, query.taxon)
+        warnings.extend(taxon_warnings)
+        if not taxon_candidates:
+            taxon_candidates = candidates
+        taxon_needs = taxon_needs or needs
         resolved.taxon = taxon
-    elif query.taxon is None:
+    elif query.taxon is None and not query.taxa:
         warnings.append("Query has no taxon; the map will be unscoped and slow.")
 
     if query.place and (query.place.q or query.place.iso2):

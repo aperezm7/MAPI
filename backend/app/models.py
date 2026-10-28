@@ -6,6 +6,7 @@ IucnCode = Literal["EX", "EW", "CR", "EN", "VU", "NT", "LC", "DD", "NE"]
 PlaceKind = Literal["country", "bbox", "gadm"]
 MapMode = Literal["tiles_plus_sample", "points", "tiles"]
 MapStyle = Literal["points", "hex", "heat"]
+PointDisplay = Literal["cluster", "individual"]
 
 
 class TaxonQuery(BaseModel):
@@ -59,10 +60,12 @@ class MapOptions(BaseModel):
     sampleLimit: int = Field(default=300, ge=1, le=10000)
     style: MapStyle = "points"
     includeInat: bool = False
+    pointDisplay: PointDisplay = "cluster"
 
 
 class MapQuery(BaseModel):
     taxon: TaxonQuery | None = None
+    taxa: list[TaxonQuery] = Field(default_factory=list, max_length=8)
     place: PlaceQuery | None = None
     time: TimeQuery | None = None
     conservation: ConservationQuery | None = None

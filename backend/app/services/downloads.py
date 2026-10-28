@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from app.compile import iucn_codes, occurrence_params, year_range
+from app.compile import iucn_codes, occurrence_params, selected_taxa, year_range
 from app.config import get_settings
 from app.models import DownloadRequest, DownloadResponse
 from app.rate_limit import gbif_limiter
@@ -17,8 +17,13 @@ def _equals(key: str, value: str) -> dict[str, str]:
 def mapquery_to_predicate(request: DownloadRequest) -> dict[str, Any]:
     predicates: list[dict[str, Any]] = []
     params = occurrence_params(request.query)
-    if "taxonKey" in params:
-        predicates.append(_equals("TAXON_KEY", str(params["taxonKey"])))
+    taxon_keys = [str(taxon.gbifKey) for taxon in selected_taxa(request.query) if taxon.gbifKey]
+    if len(taxon_keys) == 1:
+        predicates.append(_equals("TAXON_KEY", taxon_keys[0]))
+    elif len(taxon_keys) > 1:
+        predicates.append(
+            {"type": "or", "predicates": [_equals("TAXON_KEY", key) for key in taxon_keys]}
+        )
     if "country" in params:
         predicates.append(_equals("COUNTRY", str(params["country"])))
     span = year_range(request.query)
@@ -64,7 +69,7 @@ async def create_download(
             available=False,
             message="Connect a GBIF account, or set GBIF_USERNAME and GBIF_PASSWORD, to request a full occurrence download.",
         )
-    if not request.query.taxon or not request.query.taxon.gbifKey:
+    if not selected_taxa(request.query):
         return DownloadResponse(available=False, message="Resolve a taxon before requesting a download.")
 
     payload: dict[str, Any] = {

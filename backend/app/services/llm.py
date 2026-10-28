@@ -22,6 +22,7 @@ MapQuery fields (omit any field the user did not ask for):
   Translate common names to the scientific name when you are confident
   (jaguar -> Panthera onca/species, frogs -> Anura/order, birds -> Aves/class, oaks -> Quercus/genus);
   otherwise keep the name as written.
+- taxa: a list of taxon objects when the user names more than one species. Leave taxon null in that case.
 - place: {"q": country name, "kind": "country"}
 - time: {"yearMin": integer or null, "yearMax": integer or null}
 - conservation: {"iucn": list of IUCN codes}
@@ -209,6 +210,8 @@ async def _chat(client: httpx.AsyncClient, cfg: LlmConfig, messages: list[dict[s
 def _strip_resolved_ids(query: MapQuery) -> MapQuery:
     if query.taxon:
         query.taxon.gbifKey = None
+    for taxon in query.taxa:
+        taxon.gbifKey = None
     if query.place:
         query.place.iso2 = None
         query.place.bbox = None

@@ -4,13 +4,14 @@ from app.compile import (
     choose_mode,
     occurrence_params,
     record_to_feature,
+    selected_taxa,
     should_skip_record,
     tile_url_template,
     year_param,
 )
-from app.models import DownloadRequest, MapQuery
+from app.models import DownloadRequest, MapQuery, YearCount
 from app.services.downloads import mapquery_to_predicate
-from app.services.mapping import histogram_from_facets
+from app.services.mapping import histogram_from_facets, merge_histograms
 
 
 def _jaguar() -> MapQuery:
@@ -164,6 +165,42 @@ async def test_unscoped_map_rejected():
     assert result.count == 0
     assert result.tile is None
     assert any("taxon" in w.lower() or "country" in w.lower() for w in result.warnings)
+
+
+def test_selected_taxa_prefers_the_explicit_list():
+    query = MapQuery.model_validate(
+        {
+            "taxon": {"q": "draft", "gbifKey": 1},
+            "taxa": [
+                {"q": "Panthera onca", "gbifKey": 5219426},
+                {"q": "Puma concolor", "gbifKey": 2435099},
+            ],
+        }
+    )
+    assert [taxon.gbifKey for taxon in selected_taxa(query)] == [5219426, 2435099]
+    assert [taxon.gbifKey for taxon in selected_taxa(_jaguar())] == [5219426]
+
+
+def test_multi_taxon_download_predicate_ors_keys():
+    query = MapQuery.model_validate(
+        {
+            "taxa": [{"gbifKey": 5219426}, {"gbifKey": 2435099}],
+            "place": {"iso2": "CR"},
+        }
+    )
+    predicate = mapquery_to_predicate(DownloadRequest(query=query))
+    taxon_clause = next(item for item in predicate["predicates"] if item.get("type") == "or")
+    assert {item["value"] for item in taxon_clause["predicates"]} == {"5219426", "2435099"}
+
+
+def test_merge_histograms_sums_shared_years():
+    merged = merge_histograms(
+        [
+            [YearCount(year=2019, count=1), YearCount(year=2020, count=2)],
+            [YearCount(year=2020, count=4)],
+        ]
+    )
+    assert [(item.year, item.count) for item in merged] == [(2019, 1), (2020, 6)]
 
 
 def test_histogram_from_facets_fills_gaps_and_drops_outliers():

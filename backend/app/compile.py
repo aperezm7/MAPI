@@ -55,6 +55,32 @@ def iucn_codes(query: MapQuery) -> list[str]:
     return [code.upper() for code in query.conservation.iucn]
 
 
+TAXON_COLORS = (
+    "#b4532a",
+    "#1d4e89",
+    "#2f6b4f",
+    "#8a4b08",
+    "#6b3fa0",
+    "#0f6e6e",
+    "#9b3a4a",
+    "#3d5a40",
+)
+
+
+def selected_taxa(query: MapQuery) -> list:
+    """Taxa that should be drawn. An explicit list wins over the single search-box taxon."""
+    keyed = [taxon for taxon in query.taxa if taxon.gbifKey]
+    if keyed:
+        return keyed
+    if query.taxon and query.taxon.gbifKey:
+        return [query.taxon]
+    return []
+
+
+def taxon_label(taxon) -> str:
+    return taxon.canonicalName or taxon.scientificName or taxon.q or str(taxon.gbifKey or "taxon")
+
+
 def _core_filters(query: MapQuery) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if query.taxon and query.taxon.gbifKey:

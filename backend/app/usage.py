@@ -121,7 +121,16 @@ def settle(client: Client, kind: str, summary: str, body: object, ok: bool) -> N
 
 
 def summarize_query(query) -> str:
-    taxon = getattr(getattr(query, "taxon", None), "q", None)
+    names = []
+    for taxon in getattr(query, "taxa", None) or []:
+        name = getattr(taxon, "canonicalName", None) or getattr(taxon, "q", None)
+        if name:
+            names.append(name)
+    if not names:
+        single = getattr(query, "taxon", None)
+        name = getattr(single, "canonicalName", None) or getattr(single, "q", None)
+        if name:
+            names.append(name)
     place = getattr(getattr(query, "place", None), "q", None)
-    parts = [part for part in (taxon, place) if part]
+    parts = [part for part in (", ".join(names) or None, place) if part]
     return " · ".join(parts) or "unscoped query"
