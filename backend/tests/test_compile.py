@@ -4,6 +4,7 @@ from app.compile import (
     choose_mode,
     occurrence_params,
     record_to_feature,
+    selected_places,
     selected_taxa,
     should_skip_record,
     tile_url_template,
@@ -165,6 +166,33 @@ async def test_unscoped_map_rejected():
     assert result.count == 0
     assert result.tile is None
     assert any("taxon" in w.lower() or "country" in w.lower() for w in result.warnings)
+
+
+def test_selected_places_and_country_params():
+    query = MapQuery.model_validate(
+        {
+            "place": {"q": "draft", "iso2": "MX"},
+            "places": [
+                {"q": "Costa Rica", "iso2": "CR", "title": "Costa Rica"},
+                {"q": "Panama", "iso2": "PA", "title": "Panama"},
+            ],
+            "taxon": {"gbifKey": 5219426},
+        }
+    )
+    assert [place.iso2 for place in selected_places(query)] == ["CR", "PA"]
+    assert occurrence_params(query)["country"] == ["CR", "PA"]
+    single = selected_places(_jaguar())
+    assert [place.iso2 for place in single] == ["CR"]
+    assert occurrence_params(_jaguar())["country"] == "CR"
+
+
+def test_multi_place_download_predicate_ors_countries():
+    query = MapQuery.model_validate(
+        {"taxon": {"gbifKey": 1}, "places": [{"iso2": "CR"}, {"iso2": "PA"}]}
+    )
+    predicate = mapquery_to_predicate(DownloadRequest(query=query))
+    country = next(item for item in predicate["predicates"] if item.get("type") == "or")
+    assert {item["value"] for item in country["predicates"]} == {"CR", "PA"}
 
 
 def test_selected_taxa_prefers_the_explicit_list():

@@ -493,3 +493,74 @@ def test_place_suggest_matches_and_reports_misses(client: TestClient):
     assert body["candidates"] == []
     assert body["query"] is None
     assert "Atlantis" in body["warnings"][0]
+
+
+@respx.mock
+def test_map_unions_selected_countries(client: TestClient):
+    from urllib.parse import parse_qs
+
+    respx.get("https://api.gbif.org/v1/species/5219426").mock(
+        return_value=Response(200, json={"key": 5219426, "canonicalName": "Panthera onca", "rank": "SPECIES"})
+    )
+    respx.get("https://api.gbif.org/v1/enumeration/country").mock(
+        return_value=Response(
+            200,
+            json=[
+                {"iso2": "CR", "iso3": "CRI", "title": "Costa Rica"},
+                {"iso2": "PA", "iso3": "PAN", "title": "Panama"},
+            ],
+        )
+    )
+    mock_geoboundaries_cri()
+    respx.get("https://www.geoboundaries.org/api/current/gbOpen/PAN/ADM0/").mock(
+        return_value=Response(
+            200,
+            json={
+                "boundaryName": "Panama",
+                "boundaryISO": "PAN",
+                "boundaryLicense": "Open Data Commons Open Database License 1.0",
+                "simplifiedGeometryGeoJSON": "https://example.test/PAN.geojson",
+            },
+        )
+    )
+    respx.get("https://example.test/PAN.geojson").mock(return_value=Response(200, json=TINY_CR))
+
+    def occurrence(request):
+        raw = request.url.query.decode() if isinstance(request.url.query, bytes) else str(request.url.query)
+        countries = set(parse_qs(raw).get("country", []))
+        assert countries == {"CR", "PA"}
+        return Response(
+            200,
+            json={
+                "count": 3,
+                "results": [
+                    {
+                        "gbifID": 1,
+                        "decimalLatitude": 9.1,
+                        "decimalLongitude": -83.0,
+                        "scientificName": "Panthera onca",
+                        "year": 2020,
+                        "country": "Costa Rica",
+                        "issues": [],
+                    }
+                ],
+                "facets": [{"field": "YEAR", "counts": [{"name": "2020", "count": 3}]}],
+            },
+        )
+
+    respx.get("https://api.gbif.org/v1/occurrence/search").mock(side_effect=occurrence)
+    response = client.post(
+        "/v1/map",
+        json={
+            "taxon": {"q": "Panthera onca", "gbifKey": 5219426},
+            "places": [
+                {"q": "Costa Rica", "iso2": "CR", "title": "Costa Rica"},
+                {"q": "Panama", "iso2": "PA", "title": "Panama"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 3
+    assert len(body["boundary"]["features"]) == 2
+    assert {place["iso2"] for place in body["query"]["places"]} == {"CR", "PA"}

@@ -39,6 +39,11 @@
         }
       }
     },
+    "places": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/properties/place" }
+    },
     "time": {
       "type": ["object", "null"],
       "additionalProperties": false,

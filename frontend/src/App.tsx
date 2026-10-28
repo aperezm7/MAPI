@@ -1,11 +1,65 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import QueryRail from "./QueryRail";
 import YearRange from "./YearRange";
-import MapView, { type MapViewHandle } from "./MapView";
+import MapView, { type LegendItem, type MapViewHandle } from "./MapView";
+import PngStudio from "./PngStudio";
 import RecordPanel from "./RecordPanel";
 import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestPlace, suggestTaxon, triggerDownload } from "./api";
 import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate, type YearCount } from "./types";
 import { readQueryFromUrl, writeQueryToUrl } from "./urlState";
+
+function buildLegend(mapData: MapResponse, query: MapQuery, inat: InatOverlay | null): LegendItem[] {
+  const items: LegendItem[] = [];
+  const taxa = new Map<string, string>();
+  for (const feature of mapData.sample.features) {
+    const name = feature.properties?.taxonName;
+    const color = feature.properties?.taxonColor;
+    if (typeof name === "string" && typeof color === "string") taxa.set(name, color);
+  }
+  if (taxa.size) {
+    for (const [name, color] of taxa) {
+      items.push({ id: `taxon-${name}`, swatch: color, label: name, kind: "dot" });
+    }
+  } else if (mapData.sample.features.length) {
+    const name =
+      query.taxa?.find((taxon) => taxon.canonicalName || taxon.q)?.canonicalName ||
+      query.taxa?.[0]?.q ||
+      query.taxon?.canonicalName ||
+      query.taxon?.scientificName ||
+      query.taxon?.q ||
+      "Occurrences";
+    items.push({ id: "occurrences", swatch: "#b4532a", label: name, kind: "dot" });
+  }
+  const placeList = query.places?.length
+    ? query.places
+    : query.place && (query.place.iso2 || query.place.title || query.place.q)
+      ? [query.place]
+      : [];
+  const places = placeList
+    .map((place) => place.title || place.q || place.iso2)
+    .filter((name): name is string => Boolean(name));
+  if (mapData.boundary?.features?.length && places.length) {
+    items.push({ id: "places", swatch: "#1f5f5b", label: places.join(", "), kind: "line" });
+  }
+  if (query.time?.yearMin || query.time?.yearMax) {
+    items.push({
+      id: "years",
+      swatch: "#1c2424",
+      label: `Years ${query.time?.yearMin ?? "…"}–${query.time?.yearMax ?? "now"}`,
+      kind: "line",
+    });
+  }
+  items.push({
+    id: "symbols",
+    swatch: query.map?.pointDisplay === "individual" ? "#b4532a" : "#1f5f5b",
+    label: query.map?.pointDisplay === "individual" ? "One dot per sampled occurrence" : "Numbered clusters of the sample",
+    kind: "dot",
+  });
+  if (inat?.features.length) {
+    items.push({ id: "inat", swatch: "#2b6cb0", label: "iNaturalist research-grade", kind: "dot" });
+  }
+  return items;
+}
 
 function TaxonLegend({ sample }: { sample: GeoJSON.FeatureCollection }) {
   const seen = new Map<string, string>();
@@ -56,9 +110,7 @@ export default function App() {
   const [taxonError, setTaxonError] = useState<string | null>(null);
   const [placeError, setPlaceError] = useState<string | null>(null);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
-  const [pngGrid, setPngGrid] = useState(false);
-  const [pngScale, setPngScale] = useState(false);
-  const [pngCompass, setPngCompass] = useState(false);
+  const [studioOpen, setStudioOpen] = useState(false);
   const [busyAction, setBusyAction] = useState<"qgis" | "gbif" | null>(null);
   const mapRef = useRef<MapViewHandle>(null);
   const queryRef = useRef(query);
@@ -273,26 +325,10 @@ export default function App() {
     triggerDownload(blob, "mapi-boundary.geojson");
   }
 
-  function exportPng() {
-    try {
-      const dataUrl = mapRef.current?.exportPng({ grid: pngGrid, scaleBar: pngScale, compass: pngCompass });
-      if (!dataUrl) {
-        setDownloadMsg("Map is not ready to export yet.");
-        return;
-      }
-      const link = document.createElement("a");
-      link.href = dataUrl;
-      link.download = "mapi-map.png";
-      link.click();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "PNG export failed";
-      setDownloadMsg(
-        /taint|security/i.test(message)
-          ? "PNG export was blocked by the browser (cross-origin basemap tiles). Use GeoJSON or QGIS export instead."
-          : message,
-      );
-    }
-  }
+  const legendItems = useMemo(
+    () => (mapData && !mapData.blocked ? buildLegend(mapData, query, inat) : []),
+    [mapData, query, inat],
+  );
 
   async function exportQgis() {
     setDownloadMsg(null);
@@ -386,20 +422,9 @@ export default function App() {
                 <button type="button" className="secondary" onClick={exportBoundary} disabled={!mapData.boundary?.features.length}>
                   Export boundary GeoJSON
                 </button>
-                <div className="png-options">
-                  <label>
-                    <input type="checkbox" checked={pngGrid} onChange={(event) => setPngGrid(event.target.checked)} /> Graticule
-                  </label>
-                  <label>
-                    <input type="checkbox" checked={pngScale} onChange={(event) => setPngScale(event.target.checked)} /> Scale bar
-                  </label>
-                  <label>
-                    <input type="checkbox" checked={pngCompass} onChange={(event) => setPngCompass(event.target.checked)} /> North arrow
-                  </label>
-                  <button type="button" className="secondary" onClick={exportPng}>
-                    Export map PNG
-                  </button>
-                </div>
+                <button type="button" className="secondary" onClick={() => setStudioOpen(true)}>
+                  Prepare map PNG
+                </button>
                 <button type="button" className="secondary" onClick={() => void exportQgis()} disabled={busyAction !== null}>
                   {busyAction === "qgis" ? "Exporting QGIS…" : "Export QGIS package"}
                 </button>
@@ -418,6 +443,7 @@ export default function App() {
           ) : null}
           <RecordPanel feature={selected} iucn={iucn} onClose={() => setSelected(null)} />
         </div>
+        <PngStudio open={studioOpen} onClose={() => setStudioOpen(false)} map={mapRef.current} items={legendItems} />
       </main>
     </div>
   );

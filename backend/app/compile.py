@@ -81,12 +81,29 @@ def taxon_label(taxon) -> str:
     return taxon.canonicalName or taxon.scientificName or taxon.q or str(taxon.gbifKey or "taxon")
 
 
+def selected_places(query: MapQuery) -> list:
+    """Countries that should be drawn. An explicit list wins over the search-box place."""
+    keyed = [place for place in query.places if place.iso2]
+    if keyed:
+        return keyed
+    if query.place and query.place.iso2:
+        return [query.place]
+    return []
+
+
+def place_label(place) -> str:
+    return place.title or place.q or place.iso2 or "place"
+
+
 def _core_filters(query: MapQuery) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if query.taxon and query.taxon.gbifKey:
         params["taxonKey"] = query.taxon.gbifKey
-    if query.place and query.place.iso2:
-        params["country"] = query.place.iso2
+    places = selected_places(query)
+    if len(places) == 1:
+        params["country"] = places[0].iso2
+    elif len(places) > 1:
+        params["country"] = [place.iso2 for place in places]
     codes = iucn_codes(query)
     if codes:
         params["iucnRedListCategory"] = codes if len(codes) > 1 else codes[0]
@@ -98,7 +115,7 @@ def _core_filters(query: MapQuery) -> dict[str, Any]:
 def occurrence_params(query: MapQuery) -> dict[str, Any]:
     """Occurrence search params. Use eventDate — GBIF `year=` on search can hang."""
     params = _core_filters(query)
-    if query.place and query.place.bbox and len(query.place.bbox) == 4:
+    if len(selected_places(query)) <= 1 and query.place and query.place.bbox and len(query.place.bbox) == 4:
         min_lon, min_lat, max_lon, max_lat = query.place.bbox
         params["geometry"] = (
             f"POLYGON(({min_lon} {min_lat},{max_lon} {min_lat},"
@@ -115,7 +132,8 @@ def occurrence_params(query: MapQuery) -> dict[str, Any]:
 
 
 def use_adhoc_tiles(query: MapQuery) -> bool:
-    return bool(iucn_codes(query) or (query.place and query.place.bbox))
+    bbox = len(selected_places(query)) <= 1 and query.place and query.place.bbox
+    return bool(iucn_codes(query) or bbox)
 
 
 def choose_mode(query: MapQuery, count: int) -> str:

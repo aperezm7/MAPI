@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from app.compile import iucn_codes, occurrence_params, selected_taxa, year_range
+from app.compile import iucn_codes, selected_places, selected_taxa, year_range
 from app.config import get_settings
 from app.models import DownloadRequest, DownloadResponse
 from app.rate_limit import gbif_limiter
@@ -16,7 +16,6 @@ def _equals(key: str, value: str) -> dict[str, str]:
 
 def mapquery_to_predicate(request: DownloadRequest) -> dict[str, Any]:
     predicates: list[dict[str, Any]] = []
-    params = occurrence_params(request.query)
     taxon_keys = [str(taxon.gbifKey) for taxon in selected_taxa(request.query) if taxon.gbifKey]
     if len(taxon_keys) == 1:
         predicates.append(_equals("TAXON_KEY", taxon_keys[0]))
@@ -24,8 +23,11 @@ def mapquery_to_predicate(request: DownloadRequest) -> dict[str, Any]:
         predicates.append(
             {"type": "or", "predicates": [_equals("TAXON_KEY", key) for key in taxon_keys]}
         )
-    if "country" in params:
-        predicates.append(_equals("COUNTRY", str(params["country"])))
+    countries = [place.iso2 for place in selected_places(request.query) if place.iso2]
+    if len(countries) == 1:
+        predicates.append(_equals("COUNTRY", countries[0]))
+    elif len(countries) > 1:
+        predicates.append({"type": "or", "predicates": [_equals("COUNTRY", code) for code in countries]})
     span = year_range(request.query)
     if span:
         predicates.append({"type": "greaterThanOrEquals", "key": "YEAR", "value": str(span[0])})
