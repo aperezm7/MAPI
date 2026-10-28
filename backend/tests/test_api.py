@@ -163,6 +163,71 @@ def test_map_with_resolved_jaguar(client: TestClient):
 
 
 @respx.mock
+def test_map_colors_each_selected_taxon(client: TestClient):
+    respx.get("https://api.gbif.org/v1/species/5219426").mock(
+        return_value=Response(200, json={"key": 5219426, "canonicalName": "Panthera onca", "rank": "SPECIES"})
+    )
+    respx.get("https://api.gbif.org/v1/species/2435099").mock(
+        return_value=Response(200, json={"key": 2435099, "canonicalName": "Puma concolor", "rank": "SPECIES"})
+    )
+    respx.get("https://api.gbif.org/v1/enumeration/country").mock(
+        return_value=Response(200, json=[{"iso2": "CR", "iso3": "CRI", "title": "Costa Rica"}])
+    )
+    mock_geoboundaries_cri()
+
+    def occurrence(request):
+        key = request.url.params.get("taxonKey")
+        name = "Panthera onca" if key == "5219426" else "Puma concolor"
+        gbif_id = 111 if key == "5219426" else 222
+        lat = 9.7 if key == "5219426" else 10.1
+        return Response(
+            200,
+            json={
+                "count": 2,
+                "results": [
+                    {
+                        "gbifID": gbif_id,
+                        "decimalLatitude": lat,
+                        "decimalLongitude": -83.9,
+                        "scientificName": name,
+                        "eventDate": "2020-03-01",
+                        "year": 2020,
+                        "country": "Costa Rica",
+                        "basisOfRecord": "HUMAN_OBSERVATION",
+                        "issues": [],
+                    }
+                ],
+                "facets": [{"field": "YEAR", "counts": [{"name": "2020", "count": 2}]}],
+            },
+        )
+
+    respx.get("https://api.gbif.org/v1/occurrence/search").mock(side_effect=occurrence)
+    response = client.post(
+        "/v1/map",
+        json={
+            "taxa": [
+                {"q": "Panthera onca", "gbifKey": 5219426},
+                {"q": "Puma concolor", "gbifKey": 2435099},
+            ],
+            "place": {"q": "Costa Rica", "iso2": "CR"},
+            "time": {"yearMin": 2015},
+            "map": {"pointDisplay": "individual"},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["blocked"] is False
+    assert body["count"] == 4
+    assert body["tile"] is None
+    assert body["mode"] == "points"
+    features = body["sample"]["features"]
+    assert {feature["properties"]["taxonName"] for feature in features} == {"Panthera onca", "Puma concolor"}
+    assert len({feature["properties"]["taxonColor"] for feature in features}) == 2
+    assert body["query"]["map"]["pointDisplay"] == "individual"
+    assert [(row["year"], row["count"]) for row in body["histogram"]] == [(2020, 4)]
+
+
+@respx.mock
 def test_map_histogram_uses_full_year_facet(client: TestClient):
     respx.get("https://api.gbif.org/v1/species/2481907").mock(
         return_value=Response(200, json={"key": 2481907, "canonicalName": "Vultur gryphus", "rank": "SPECIES"})

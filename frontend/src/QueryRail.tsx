@@ -2,8 +2,8 @@ import { FormEvent, useMemo } from "react";
 import AccountCard from "./AccountCard";
 import Autocomplete from "./Autocomplete";
 import { autocompleteTaxon, suggestPlace } from "./api";
-import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
-import { IUCN_OPTIONS, JAGUAR_PRESET, NORTHSTAR } from "./types";
+import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, PointDisplay, TaxonCandidate, TaxonQuery } from "./types";
+import { IUCN_OPTIONS, JAGUAR_PRESET, NORTHSTAR, TAXON_COLORS } from "./types";
 
 type Props = {
   query: MapQuery;
@@ -55,16 +55,40 @@ export default function QueryRail({
   nlStatus,
 }: Props) {
   const selectedIucn = query.conservation?.iucn ?? [];
+  const selectedTaxa = query.taxa ?? [];
   const resolved = useMemo(() => {
+    const taxaLabel = selectedTaxa
+      .map((taxon) => taxon.canonicalName || taxon.scientificName || taxon.q)
+      .filter(Boolean)
+      .join(", ");
     const bits = [
-      query.taxon?.canonicalName || query.taxon?.scientificName,
+      taxaLabel || query.taxon?.canonicalName || query.taxon?.scientificName,
       query.taxon?.rank,
       query.place?.iso2,
       query.time?.yearMin ? `${query.time.yearMin}–${query.time.yearMax ?? "now"}` : null,
       selectedIucn.length ? selectedIucn.join("/") : null,
     ].filter(Boolean);
     return bits.join(" · ");
-  }, [query, selectedIucn]);
+  }, [query, selectedIucn, selectedTaxa]);
+
+  function addSelectedTaxon() {
+    const current = query.taxon;
+    if (!current?.gbifKey || selectedTaxa.length >= TAXON_COLORS.length) return;
+    if (selectedTaxa.some((taxon) => taxon.gbifKey === current.gbifKey)) return;
+    const next: TaxonQuery = {
+      q: current.q,
+      rankHint: current.rankHint,
+      gbifKey: current.gbifKey,
+      scientificName: current.scientificName,
+      canonicalName: current.canonicalName,
+      rank: current.rank,
+    };
+    setQuery({ ...query, taxa: [...selectedTaxa, next] });
+  }
+
+  function removeTaxon(gbifKey: number) {
+    setQuery({ ...query, taxa: selectedTaxa.filter((taxon) => taxon.gbifKey !== gbifKey) });
+  }
 
   function patch(partial: MapQuery) {
     setQuery({
@@ -208,9 +232,34 @@ export default function QueryRail({
             <option value="species">species</option>
           </select>
         </label>
-        <button type="submit" className="secondary" disabled={loading}>
-          Resolve taxon
-        </button>
+        <div className="actions">
+          <button type="submit" className="secondary" disabled={loading}>
+            Resolve taxon
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!query.taxon?.gbifKey || selectedTaxa.some((taxon) => taxon.gbifKey === query.taxon?.gbifKey) || selectedTaxa.length >= TAXON_COLORS.length}
+            onClick={addSelectedTaxon}
+          >
+            Add to map
+          </button>
+        </div>
+        {selectedTaxa.length > 0 ? (
+          <div className="taxon-list">
+            {selectedTaxa.map((taxon, index) => (
+              <span className="taxon-chip" key={taxon.gbifKey ?? index}>
+                <i className="swatch" style={{ background: TAXON_COLORS[index % TAXON_COLORS.length] }} />
+                <span>{taxon.canonicalName || taxon.scientificName || taxon.q}</span>
+                <button type="button" className="linkish" onClick={() => taxon.gbifKey && removeTaxon(taxon.gbifKey)}>
+                  Remove
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="footer-attr">Add each resolved taxon to map them together. One taxon still draws as before.</div>
+        )}
         {taxonError ? (
           <div className="warn" id="taxon-error" role="alert">
             {taxonError}
@@ -351,6 +400,26 @@ export default function QueryRail({
             iNaturalist research-grade overlay
           </span>
         </label>
+        <div className="chips">
+          {(
+            [
+              ["cluster", "Cluster counts"],
+              ["individual", "Individual occurrences"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={(query.map?.pointDisplay ?? "cluster") === value ? "chip active" : "chip ghost"}
+              onClick={() => patch({ map: { pointDisplay: value as PointDisplay } })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="footer-attr">
+          Cluster counts group nearby records and split as you zoom in. Individual occurrences keep one dot per record at every zoom.
+        </div>
       </section>
 
       <div className="actions">

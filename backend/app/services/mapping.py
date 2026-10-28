@@ -12,7 +12,10 @@ from app.compile import (
     gbif_attribution,
     occurrence_params,
     record_to_feature,
+    TAXON_COLORS,
+    selected_taxa,
     should_skip_record,
+    taxon_label,
     tile_url_template,
     year_range,
 )
@@ -84,18 +87,114 @@ async def _year_histogram(client: httpx.AsyncClient, query: MapQuery) -> list[Ye
     return histogram_from_facets(page.get("facets") if isinstance(page, dict) else None)
 
 
+def merge_histograms(parts: list[list[YearCount]]) -> list[YearCount]:
+    by_year: dict[int, int] = {}
+    for histogram in parts:
+        for bin_row in histogram:
+            by_year[bin_row.year] = by_year.get(bin_row.year, 0) + bin_row.count
+    if not by_year:
+        return []
+    first, last = min(by_year), max(by_year)
+    if last - first > 400:
+        return [YearCount(year=year, count=by_year[year]) for year in sorted(by_year)]
+    return [YearCount(year=year, count=by_year.get(year, 0)) for year in range(first, last + 1)]
+
+
+def _tag_feature(feature: dict[str, Any], taxon, color: str) -> dict[str, Any]:
+    properties = dict(feature.get("properties") or {})
+    properties["taxonKey"] = taxon.gbifKey
+    properties["taxonName"] = taxon.canonicalName or taxon.scientificName or taxon.q
+    properties["taxonColor"] = color
+    return {**feature, "properties": properties}
+
+
 async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse:
+    taxa = selected_taxa(query)
+    if len(taxa) > 1:
+        return await _compile_many(client, query, taxa)
+    if len(taxa) == 1 and (query.taxon is None or query.taxon.gbifKey != taxa[0].gbifKey):
+        query = query.model_copy(update={"taxon": taxa[0]})
+    return await _compile_one(client, query)
+
+
+async def _compile_many(client: httpx.AsyncClient, query: MapQuery, taxa: list) -> MapResponse:
+    warnings: list[str] = []
+    boundary, boundary_attr = await _boundary_fields(client, query, warnings)
+    compiled = await asyncio.gather(
+        *[
+            _compile_one(
+                client,
+                query.model_copy(update={"taxon": taxon, "taxa": []}),
+                boundary=boundary,
+                boundary_attribution=boundary_attr,
+                fetch_boundary=False,
+            )
+            for taxon in taxa
+        ]
+    )
+    features: list[dict[str, Any]] = []
+    omitted = 0
+    truncated = False
+    count = 0
+    for index, (taxon, part) in enumerate(zip(taxa, compiled, strict=True)):
+        color = TAXON_COLORS[index % len(TAXON_COLORS)]
+        label = taxon_label(taxon)
+        count += part.count
+        omitted += part.sampleOmittedSensitive
+        truncated = truncated or part.sampleTruncated
+        for feature in part.sample.get("features") or []:
+            features.append(_tag_feature(feature, taxon, color))
+        for warning in part.warnings:
+            if warning.startswith("Place outline"):
+                continue
+            warnings.append(f"{label}: {warning}")
+    warnings.append(
+        "Each color is one taxon. Points are a capped sample per species; the record count is the full GBIF total."
+    )
+    attribution = [gbif_attribution()]
+    span = year_range(query)
+    if span:
+        attribution.append(f"Filtered to years {span[0]}–{span[1]}.")
+    if boundary_attr:
+        attribution.append(boundary_attr)
+    return MapResponse(
+        query=query,
+        count=count,
+        countIsApproximate=False,
+        tile=None,
+        sample={"type": "FeatureCollection", "features": features},
+        sampleTruncated=truncated,
+        sampleOmittedSensitive=omitted,
+        boundary=boundary,
+        boundaryAttribution=boundary_attr,
+        histogram=merge_histograms([part.histogram for part in compiled]),
+        attribution=attribution,
+        warnings=warnings,
+        mode="points",
+        style="points",
+    )
+
+
+async def _compile_one(
+    client: httpx.AsyncClient,
+    query: MapQuery,
+    *,
+    boundary: dict[str, Any] | None = None,
+    boundary_attribution: str | None = None,
+    fetch_boundary: bool = True,
+) -> MapResponse:
     warnings: list[str] = []
     params = occurrence_params(query)
     if "taxonKey" not in params and "country" not in params:
         warnings.append("Add a taxon or country before mapping — unbounded queries are rejected.")
-        boundary, boundary_attr = await _boundary_fields(client, query, warnings)
+        if fetch_boundary:
+            boundary, boundary_attribution = await _boundary_fields(client, query, warnings)
         return MapResponse(
             query=query,
             count=0,
             sample=empty_feature_collection(),
             boundary=boundary,
-            boundaryAttribution=boundary_attr,
+            boundaryAttribution=boundary_attribution,
             attribution=[gbif_attribution()],
             warnings=warnings,
             mode=query.map.mode,
@@ -147,9 +246,10 @@ async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse
     span = year_range(query)
     if span:
         attribution.append(f"Filtered to years {span[0]}–{span[1]}.")
-    boundary, boundary_attr = await _boundary_fields(client, query, warnings)
-    if boundary_attr:
-        attribution.append(boundary_attr)
+    if fetch_boundary:
+        boundary, boundary_attribution = await _boundary_fields(client, query, warnings)
+    if boundary_attribution:
+        attribution.append(boundary_attribution)
 
     return MapResponse(
         query=query,
@@ -160,7 +260,7 @@ async def compile_map(client: httpx.AsyncClient, query: MapQuery) -> MapResponse
         sampleTruncated=truncated,
         sampleOmittedSensitive=omitted_sensitive,
         boundary=boundary,
-        boundaryAttribution=boundary_attr,
+        boundaryAttribution=boundary_attribution,
         histogram=histogram,
         attribution=attribution,
         warnings=warnings,

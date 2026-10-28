@@ -7,6 +7,28 @@ import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, pla
 import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate, type YearCount } from "./types";
 import { readQueryFromUrl, writeQueryToUrl } from "./urlState";
 
+function TaxonLegend({ sample }: { sample: GeoJSON.FeatureCollection }) {
+  const seen = new Map<string, string>();
+  for (const feature of sample.features) {
+    const name = feature.properties?.taxonName;
+    const color = feature.properties?.taxonColor;
+    if (typeof name === "string" && typeof color === "string" && !seen.has(name)) {
+      seen.set(name, color);
+    }
+  }
+  if (seen.size < 2) return null;
+  return (
+    <ul className="legend">
+      {[...seen.entries()].map(([name, color]) => (
+        <li key={name}>
+          <i className="swatch" style={{ background: color }} />
+          <span>{name}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function clampedYearWindow(bins: YearCount[], time: MapQuery["time"]): { start: number; end: number } {
   const first = bins[0].year;
   const last = bins[bins.length - 1].year;
@@ -34,6 +56,9 @@ export default function App() {
   const [taxonError, setTaxonError] = useState<string | null>(null);
   const [placeError, setPlaceError] = useState<string | null>(null);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
+  const [pngGrid, setPngGrid] = useState(false);
+  const [pngScale, setPngScale] = useState(false);
+  const [pngCompass, setPngCompass] = useState(false);
   const [busyAction, setBusyAction] = useState<"qgis" | "gbif" | null>(null);
   const mapRef = useRef<MapViewHandle>(null);
   const queryRef = useRef(query);
@@ -167,7 +192,8 @@ export default function App() {
     try {
       const resolved = await resolveQuery(target);
       await applyResolved(resolved.query, resolved);
-      if (resolved.taxonNeedsDisambiguation && !target.taxon?.gbifKey) {
+      const chosenTaxa = (target.taxa ?? []).filter((taxon) => taxon.gbifKey);
+      if (!chosenTaxa.length && resolved.taxonNeedsDisambiguation && !target.taxon?.gbifKey) {
         setMapData(null);
         setError("Pick a taxon match before drawing the map.");
         return;
@@ -249,7 +275,7 @@ export default function App() {
 
   function exportPng() {
     try {
-      const dataUrl = mapRef.current?.exportPng();
+      const dataUrl = mapRef.current?.exportPng({ grid: pngGrid, scaleBar: pngScale, compass: pngCompass });
       if (!dataUrl) {
         setDownloadMsg("Map is not ready to export yet.");
         return;
@@ -321,7 +347,13 @@ export default function App() {
         nlStatus={nlStatus}
       />
       <main className="stage">
-        <MapView ref={mapRef} mapData={mapData} inat={inat} onSelect={(f) => void onSelectFeature(f)} />
+        <MapView
+          ref={mapRef}
+          mapData={mapData}
+          inat={inat}
+          pointDisplay={query.map?.pointDisplay ?? "cluster"}
+          onSelect={(f) => void onSelectFeature(f)}
+        />
         <div className="hud">
           {error ? <div className="warn">{error}</div> : null}
           {!mapData && !error ? (
@@ -330,6 +362,7 @@ export default function App() {
           {mapData && !mapData.blocked ? (
             <div className="card">
               <div className="count-badge">{mapData.count.toLocaleString()} records</div>
+              <TaxonLegend sample={mapData.sample} />
               <div className="footer-attr">
                 {mapData.mode} · {mapData.style}
                 {mapData.sampleTruncated ? " · sample truncated" : ""}
@@ -353,9 +386,20 @@ export default function App() {
                 <button type="button" className="secondary" onClick={exportBoundary} disabled={!mapData.boundary?.features.length}>
                   Export boundary GeoJSON
                 </button>
-                <button type="button" className="secondary" onClick={exportPng}>
-                  Export map PNG
-                </button>
+                <div className="png-options">
+                  <label>
+                    <input type="checkbox" checked={pngGrid} onChange={(event) => setPngGrid(event.target.checked)} /> Graticule
+                  </label>
+                  <label>
+                    <input type="checkbox" checked={pngScale} onChange={(event) => setPngScale(event.target.checked)} /> Scale bar
+                  </label>
+                  <label>
+                    <input type="checkbox" checked={pngCompass} onChange={(event) => setPngCompass(event.target.checked)} /> North arrow
+                  </label>
+                  <button type="button" className="secondary" onClick={exportPng}>
+                    Export map PNG
+                  </button>
+                </div>
                 <button type="button" className="secondary" onClick={() => void exportQgis()} disabled={busyAction !== null}>
                   {busyAction === "qgis" ? "Exporting QGIS…" : "Export QGIS package"}
                 </button>

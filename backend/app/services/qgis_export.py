@@ -140,8 +140,13 @@ LAYER_TREE = (
 
 
 def package_slug(query: MapQuery) -> str:
-    taxon = "map"
-    if query.taxon:
+    labels = [
+        taxon.canonicalName or taxon.scientificName or taxon.q
+        for taxon in query.taxa
+        if taxon.canonicalName or taxon.scientificName or taxon.q
+    ]
+    taxon = ", ".join(labels) if labels else "map"
+    if not labels and query.taxon:
         taxon = query.taxon.canonicalName or query.taxon.scientificName or query.taxon.q or "map"
     place = "world"
     if query.place:
