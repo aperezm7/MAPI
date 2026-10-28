@@ -24,10 +24,19 @@ type Props = {
   onSelect: (feature: GeoJSON.Feature | null) => void;
 };
 
+export type LegendItem = {
+  id: string;
+  swatch: string;
+  label: string;
+  kind: "dot" | "line";
+};
+
 export type PngOptions = {
   grid: boolean;
   scaleBar: boolean;
   compass: boolean;
+  legend?: boolean;
+  legendItems?: LegendItem[];
 };
 
 export type MapViewHandle = {
@@ -203,6 +212,42 @@ function drawCompass(ctx: CanvasRenderingContext2D, map: maplibregl.Map, ratio: 
   ctx.restore();
 }
 
+function drawLegend(ctx: CanvasRenderingContext2D, items: LegendItem[], ratio: number) {
+  if (!items.length) return;
+  const x = 16 * ratio;
+  const y = 16 * ratio;
+  const row = 20 * ratio;
+  ctx.save();
+  ctx.font = `${Math.round(13 * ratio)}px Georgia, "Times New Roman", serif`;
+  const textWidth = Math.max(...items.map((item) => ctx.measureText(item.label).width), ctx.measureText("Legend").width);
+  const boxWidth = textWidth + 46 * ratio;
+  const boxHeight = (items.length + 1.35) * row;
+  ctx.fillStyle = "rgba(247, 244, 238, 0.94)";
+  ctx.strokeStyle = "#1c2424";
+  ctx.lineWidth = Math.max(1, ratio);
+  ctx.fillRect(x, y, boxWidth, boxHeight);
+  ctx.strokeRect(x, y, boxWidth, boxHeight);
+  ctx.fillStyle = "#1c2424";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Legend", x + 12 * ratio, y + row * 0.75);
+  items.forEach((item, index) => {
+    const cy = y + row * (index + 1.7);
+    ctx.fillStyle = item.swatch;
+    ctx.strokeStyle = "#1c2424";
+    if (item.kind === "line") {
+      ctx.fillRect(x + 12 * ratio, cy - 1.5 * ratio, 16 * ratio, 3 * ratio);
+    } else {
+      ctx.beginPath();
+      ctx.arc(x + 20 * ratio, cy, 5 * ratio, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#1c2424";
+    ctx.fillText(item.label, x + 36 * ratio, cy);
+  });
+  ctx.restore();
+}
+
 function installSampleLayers(map: maplibregl.Map, cluster: boolean) {
   for (const layerId of ["gbif-points", "gbif-cluster-count", "gbif-clusters"]) {
     if (map.getLayer(layerId)) map.removeLayer(layerId);
@@ -274,7 +319,8 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, ina
       if (!map) return null;
       map.triggerRepaint();
       const source = map.getCanvas();
-      const decorations = options && (options.grid || options.scaleBar || options.compass);
+      const showLegend = Boolean(options?.legend && options.legendItems?.length);
+      const decorations = options && (options.grid || options.scaleBar || options.compass || showLegend);
       if (!decorations) return source.toDataURL("image/png");
       const canvas = document.createElement("canvas");
       canvas.width = source.width;
@@ -286,6 +332,7 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView({ mapData, ina
       if (options.grid) drawGraticule(ctx, map, ratio);
       if (options.scaleBar) drawScaleBar(ctx, map, ratio);
       if (options.compass) drawCompass(ctx, map, ratio);
+      if (showLegend) drawLegend(ctx, options.legendItems ?? [], ratio);
       return canvas.toDataURL("image/png");
     },
   }));

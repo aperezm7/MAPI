@@ -24,6 +24,7 @@ MapQuery fields (omit any field the user did not ask for):
   otherwise keep the name as written.
 - taxa: a list of taxon objects when the user names more than one species. Leave taxon null in that case.
 - place: {"q": country name, "kind": "country"}
+- places: a list of place objects when the user names more than one country. Leave place null in that case.
 - time: {"yearMin": integer or null, "yearMax": integer or null}
 - conservation: {"iucn": list of IUCN codes}
 - filters: {"hasCoordinate": true, "occurrenceStatus": "PRESENT"}
@@ -217,6 +218,11 @@ def _strip_resolved_ids(query: MapQuery) -> MapQuery:
         query.place.bbox = None
         if query.place.q:
             query.place.kind = "country"
+    for place in query.places:
+        place.iso2 = None
+        place.bbox = None
+        if place.q:
+            place.kind = "country"
     return query
 
 

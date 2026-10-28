@@ -131,6 +131,15 @@ def summarize_query(query) -> str:
         name = getattr(single, "canonicalName", None) or getattr(single, "q", None)
         if name:
             names.append(name)
-    place = getattr(getattr(query, "place", None), "q", None)
-    parts = [part for part in (", ".join(names) or None, place) if part]
+    place_names = []
+    for place in getattr(query, "places", None) or []:
+        name = getattr(place, "title", None) or getattr(place, "q", None) or getattr(place, "iso2", None)
+        if name:
+            place_names.append(name)
+    if not place_names:
+        single = getattr(query, "place", None)
+        name = getattr(single, "title", None) or getattr(single, "q", None) or getattr(single, "iso2", None)
+        if name:
+            place_names.append(name)
+    parts = [part for part in (", ".join(names) or None, ", ".join(place_names) or None) if part]
     return " · ".join(parts) or "unscoped query"

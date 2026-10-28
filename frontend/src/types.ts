@@ -35,6 +35,7 @@ export interface MapQuery {
   taxon?: TaxonQuery | null;
   taxa?: TaxonQuery[];
   place?: PlaceQuery | null;
+  places?: PlaceQuery[];
   time?: { yearMin?: number | null; yearMax?: number | null } | null;
   conservation?: { iucn?: IucnCode[] } | null;
   filters?: {
@@ -178,11 +179,12 @@ export const JAGUAR_PRESET: MapQuery = {
 export function emptyQuery(): MapQuery {
   return {
     taxon: { q: "" },
+    taxa: [],
     place: { q: "", kind: "country" },
+    places: [],
     time: { yearMin: 2015, yearMax: null },
     conservation: { iucn: [] },
     filters: { hasCoordinate: true, occurrenceStatus: "PRESENT" },
-    taxa: [],
     map: { mode: "tiles_plus_sample", sampleLimit: 300, style: "points", includeInat: false, pointDisplay: "cluster" },
   };
 }

@@ -148,8 +148,13 @@ def package_slug(query: MapQuery) -> str:
     taxon = ", ".join(labels) if labels else "map"
     if not labels and query.taxon:
         taxon = query.taxon.canonicalName or query.taxon.scientificName or query.taxon.q or "map"
-    place = "world"
-    if query.place:
+    place_labels = [
+        place.title or place.q or place.iso2
+        for place in query.places
+        if place.title or place.q or place.iso2
+    ]
+    place = ", ".join(place_labels) if place_labels else "world"
+    if not place_labels and query.place:
         place = query.place.iso2 or query.place.title or query.place.q or "world"
     raw = f"{taxon}-{place}"
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", raw).strip("-").lower()

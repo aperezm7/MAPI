@@ -2,7 +2,7 @@ import { FormEvent, useMemo } from "react";
 import AccountCard from "./AccountCard";
 import Autocomplete from "./Autocomplete";
 import { autocompleteTaxon, suggestPlace } from "./api";
-import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, PointDisplay, TaxonCandidate, TaxonQuery } from "./types";
+import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, PlaceQuery, PointDisplay, TaxonCandidate, TaxonQuery } from "./types";
 import { IUCN_OPTIONS, JAGUAR_PRESET, NORTHSTAR, TAXON_COLORS } from "./types";
 
 type Props = {
@@ -56,20 +56,43 @@ export default function QueryRail({
 }: Props) {
   const selectedIucn = query.conservation?.iucn ?? [];
   const selectedTaxa = query.taxa ?? [];
+  const selectedPlaces = query.places ?? [];
   const resolved = useMemo(() => {
     const taxaLabel = selectedTaxa
       .map((taxon) => taxon.canonicalName || taxon.scientificName || taxon.q)
       .filter(Boolean)
       .join(", ");
+    const placeLabel = selectedPlaces
+      .map((place) => place.title || place.q || place.iso2)
+      .filter(Boolean)
+      .join(", ");
     const bits = [
       taxaLabel || query.taxon?.canonicalName || query.taxon?.scientificName,
       query.taxon?.rank,
-      query.place?.iso2,
+      placeLabel || query.place?.iso2,
       query.time?.yearMin ? `${query.time.yearMin}–${query.time.yearMax ?? "now"}` : null,
       selectedIucn.length ? selectedIucn.join("/") : null,
     ].filter(Boolean);
     return bits.join(" · ");
-  }, [query, selectedIucn, selectedTaxa]);
+  }, [query, selectedIucn, selectedTaxa, selectedPlaces]);
+
+  function addSelectedPlace() {
+    const current = query.place;
+    if (!current?.iso2 || selectedPlaces.length >= 8) return;
+    if (selectedPlaces.some((place) => place.iso2 === current.iso2)) return;
+    const next: PlaceQuery = {
+      q: current.q,
+      kind: current.kind ?? "country",
+      iso2: current.iso2,
+      title: current.title,
+      bbox: current.bbox,
+    };
+    setQuery({ ...query, places: [...selectedPlaces, next] });
+  }
+
+  function removePlace(iso2: string) {
+    setQuery({ ...query, places: selectedPlaces.filter((place) => place.iso2 !== iso2) });
+  }
 
   function addSelectedTaxon() {
     const current = query.taxon;
@@ -128,8 +151,11 @@ export default function QueryRail({
 
       <AccountCard />
 
-      <section className="card">
-        <h2>Natural language</h2>
+      <details className="card disclosure">
+        <summary>
+          <span>Natural language</span>
+          <small>{nlStatus?.available ? "Planner ready" : "Optional"}</small>
+        </summary>
         {nlStatus ? (
           <div className={nlStatus.available ? "ok" : "empty"}>
             {nlStatus.available
@@ -171,7 +197,7 @@ export default function QueryRail({
             {note}
           </div>
         ))}
-      </section>
+      </details>
 
       <section className="card">
         <h2>MapQuery</h2>
@@ -309,9 +335,34 @@ export default function QueryRail({
             describedBy={placeError ? "place-error" : undefined}
           />
         </label>
-        <button type="submit" className="secondary" disabled={loading}>
-          Resolve place
-        </button>
+        <div className="actions">
+          <button type="submit" className="secondary" disabled={loading}>
+            Resolve place
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!query.place?.iso2 || selectedPlaces.some((place) => place.iso2 === query.place?.iso2) || selectedPlaces.length >= 8}
+            onClick={addSelectedPlace}
+          >
+            Add location
+          </button>
+        </div>
+        {selectedPlaces.length > 0 ? (
+          <div className="taxon-list">
+            {selectedPlaces.map((place) => (
+              <span className="taxon-chip" key={place.iso2}>
+                <i className="swatch line" style={{ background: "#1f5f5b" }} />
+                <span>{place.title || place.q || place.iso2}</span>
+                <button type="button" className="linkish" onClick={() => place.iso2 && removePlace(place.iso2)}>
+                  Remove
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="footer-attr">Add each country to map them together. One country still draws as before.</div>
+        )}
         {placeError ? (
           <div className="warn" id="place-error" role="alert">
             {placeError}

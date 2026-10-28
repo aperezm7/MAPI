@@ -93,8 +93,11 @@ export default function AccountCard() {
       : null;
 
   return (
-    <section className="card">
-      <h2>Account</h2>
+    <details className="card disclosure">
+      <summary>
+        <span>Account</span>
+        <small>{needsKey ? "API key" : account?.name || "Optional"}</small>
+      </summary>
       {status ? (
         <div className={needsKey ? "warn" : "ok"}>
           {needsKey
@@ -181,6 +184,6 @@ export default function AccountCard() {
       ) : null}
       {message ? <div className="ok">{message}</div> : null}
       {error ? <div className="warn">{error}</div> : null}
-    </section>
+    </details>
   );
 }

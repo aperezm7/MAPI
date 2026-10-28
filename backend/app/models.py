@@ -67,6 +67,7 @@ class MapQuery(BaseModel):
     taxon: TaxonQuery | None = None
     taxa: list[TaxonQuery] = Field(default_factory=list, max_length=8)
     place: PlaceQuery | None = None
+    places: list[PlaceQuery] = Field(default_factory=list, max_length=8)
     time: TimeQuery | None = None
     conservation: ConservationQuery | None = None
     filters: FiltersQuery = Field(default_factory=FiltersQuery)

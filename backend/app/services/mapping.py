@@ -13,6 +13,7 @@ from app.compile import (
     occurrence_params,
     record_to_feature,
     TAXON_COLORS,
+    selected_places,
     selected_taxa,
     should_skip_record,
     taxon_label,
@@ -63,13 +64,29 @@ def _histogram_from_records(records: list[dict[str, Any]]) -> list[YearCount]:
 async def _boundary_fields(
     client: httpx.AsyncClient, query: MapQuery, warnings: list[str]
 ) -> tuple[dict[str, Any] | None, str | None]:
-    try:
-        boundary, attribution = await shape_for_place(client, query.place)
-    except Exception:
-        boundary, attribution = None, None
-    if query.place and (query.place.iso2 or query.place.bbox) and not boundary:
-        warnings.append("Place outline unavailable — map still uses the GBIF country or bbox filter.")
-    return boundary, attribution
+    from app.compile import place_label
+
+    places = selected_places(query)
+    if not places and query.place and (query.place.iso2 or query.place.bbox):
+        places = [query.place]
+    features: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for place in places:
+        try:
+            boundary, attribution = await shape_for_place(client, place)
+        except Exception:
+            boundary, attribution = None, None
+        if boundary and boundary.get("features"):
+            features.extend(boundary["features"])
+            if attribution and attribution not in notes:
+                notes.append(attribution)
+        elif place.iso2 or place.bbox:
+            warnings.append(
+                f"Place outline unavailable for {place_label(place)} — the map still uses that country filter."
+            )
+    if not features:
+        return None, None
+    return {"type": "FeatureCollection", "features": features}, " ".join(notes)
 
 
 async def _year_histogram(client: httpx.AsyncClient, query: MapQuery) -> list[YearCount]:
