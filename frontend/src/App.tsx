@@ -3,9 +3,10 @@ import QueryRail from "./QueryRail";
 import YearRange from "./YearRange";
 import MapView, { type MapViewHandle } from "./MapView";
 import RecordPanel from "./RecordPanel";
-import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, fetchNlStatus, planNl, requestGbifDownload, resolveQuery, suggestPlace, suggestTaxon, triggerDownload } from "./api";
-import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type NlStatus, type PlaceCandidate, type TaxonCandidate, type YearCount } from "./types";
-import { readQueryFromUrl, writeQueryToUrl } from "./urlState";
+import { downloadQgisPackage, fetchIucn, fetchInat, fetchMap, requestGbifDownload, resolveQuery, suggestTaxon, triggerDownload } from "./api";
+import { loadLibrary, mapFileSlug, newMapId, saveLibrary, type MapLibrary } from "./mapLibrary";
+import { emptyQuery, type IucnStatus, type InatOverlay, type MapQuery, type MapResponse, type PlaceCandidate, type TaxonCandidate, type YearCount } from "./types";
+import { writeQueryToUrl } from "./urlState";
 
 function clampedYearWindow(bins: YearCount[], time: MapQuery["time"]): { start: number; end: number } {
   const first = bins[0].year;
@@ -16,13 +17,12 @@ function clampedYearWindow(bins: YearCount[], time: MapQuery["time"]): { start: 
 }
 
 export default function App() {
-  const [query, setQuery] = useState<MapQuery>(() => readQueryFromUrl() ?? emptyQuery());
-  const [nlPrompt, setNlPrompt] = useState("show endangered amphibians in Costa Rica since 2015");
-  const [nlDraft, setNlDraft] = useState<MapQuery | null>(null);
-  const [nlNotes, setNlNotes] = useState<string[]>([]);
-  const [nlStatus, setNlStatus] = useState<NlStatus | null>(null);
+  const [boot] = useState(loadLibrary);
+  const [library, setLibrary] = useState<MapLibrary>(boot);
+  const [query, setQuery] = useState<MapQuery>(
+    () => boot.maps.find((map) => map.id === boot.activeId)?.query ?? emptyQuery(),
+  );
   const [taxonCandidates, setTaxonCandidates] = useState<TaxonCandidate[]>([]);
-  const [placeCandidates, setPlaceCandidates] = useState<PlaceCandidate[]>([]);
   const [taxonNeeds, setTaxonNeeds] = useState(false);
   const [placeNeeds, setPlaceNeeds] = useState(false);
   const [mapData, setMapData] = useState<MapResponse | null>(null);
@@ -32,7 +32,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [taxonError, setTaxonError] = useState<string | null>(null);
-  const [placeError, setPlaceError] = useState<string | null>(null);
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"qgis" | "gbif" | null>(null);
   const mapRef = useRef<MapViewHandle>(null);
@@ -43,13 +42,16 @@ export default function App() {
     writeQueryToUrl(query);
   }, [query]);
 
-  function refreshNlStatus() {
-    fetchNlStatus()
-      .then(setNlStatus)
-      .catch(() => setNlStatus(null));
-  }
+  useEffect(() => {
+    setLibrary((prev) => ({
+      ...prev,
+      maps: prev.maps.map((map) => (map.id === prev.activeId ? { ...map, query } : map)),
+    }));
+  }, [query]);
 
-  useEffect(refreshNlStatus, []);
+  useEffect(() => {
+    saveLibrary(library);
+  }, [library]);
 
   function commitYearWindow(start: number, end: number) {
     if (!mapData?.histogram.length) return;
@@ -78,7 +80,6 @@ export default function App() {
   }) {
     setQuery(next);
     if (extras?.taxonCandidates) setTaxonCandidates(extras.taxonCandidates);
-    if (extras?.placeCandidates) setPlaceCandidates(extras.placeCandidates);
     setTaxonNeeds(Boolean(extras?.taxonNeedsDisambiguation));
     setPlaceNeeds(Boolean(extras?.placeNeedsDisambiguation));
     if (extras?.warnings?.length) setError(extras.warnings.join(" "));
@@ -127,36 +128,9 @@ export default function App() {
     setTaxonError(warnings.length ? warnings.join(" ") : null);
   }
 
-  async function onResolvePlace() {
-    const name = (query.place?.q ?? "").trim();
-    if (!name) {
-      setPlaceError("Type a country name or ISO code first.");
-      return;
-    }
-    setLoading(true);
-    setPlaceError(null);
-    try {
-      const data = await suggestPlace(name);
-      setPlaceCandidates(data.candidates);
-      if (!data.query?.iso2) {
-        setPlaceNeeds(false);
-        setPlaceError(data.warnings[0] ?? `No country matches “${name}”.`);
-        return;
-      }
-      setQuery((prev) => ({ ...prev, place: { ...data.query, q: prev.place?.q ?? name } }));
-      setPlaceNeeds(data.needsDisambiguation);
-    } catch (err) {
-      setPlaceError(err instanceof Error ? err.message : "Place lookup failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function onPickPlace(candidate: PlaceCandidate) {
     setQuery((prev) => ({ ...prev, place: { q: candidate.title, kind: "country", iso2: candidate.iso2, title: candidate.title } }));
-    setPlaceCandidates((prev) => (prev.some((c) => c.iso2 === candidate.iso2) ? prev : [candidate]));
     setPlaceNeeds(false);
-    setPlaceError(null);
   }
 
   async function compile(target: MapQuery = query) {
@@ -175,7 +149,6 @@ export default function App() {
       const mapped = await fetchMap(resolved.query);
       setMapData(mapped);
       setTaxonCandidates(mapped.taxonCandidates ?? resolved.taxonCandidates);
-      setPlaceCandidates(mapped.placeCandidates ?? resolved.placeCandidates);
       setTaxonNeeds(Boolean(mapped.taxonNeedsDisambiguation));
       setPlaceNeeds(Boolean(mapped.placeNeedsDisambiguation));
       if (mapped.blocked) {
@@ -206,21 +179,51 @@ export default function App() {
     }
   }
 
-  async function onPlan() {
-    setLoading(true);
+  const activeMap = library.maps.find((map) => map.id === library.activeId);
+
+  function openMap(id: string) {
+    const next = library.maps.find((map) => map.id === id);
+    if (!next || next.id === library.activeId) return;
+    setLibrary((prev) => ({ ...prev, activeId: id }));
+    setQuery(next.query);
+    setSelected(null);
+    void compile(next.query);
+  }
+
+  function newMap() {
+    const id = newMapId();
+    const created = { id, name: `Map ${library.maps.length + 1}`, query: emptyQuery() };
+    setLibrary((prev) => ({ maps: [...prev.maps, created], activeId: id }));
+    setQuery(created.query);
+    setMapData(null);
+    setInat(null);
+    setSelected(null);
     setError(null);
-    try {
-      const planned = await planNl(nlPrompt);
-      setNlDraft(planned.resolve.query);
-      const origin = [planned.provider, planned.model].filter(Boolean).join(" · ");
-      setNlNotes(origin ? [origin, ...planned.notes] : planned.notes);
-      await applyResolved(planned.resolve.query, planned.resolve);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Planner unavailable");
-      refreshNlStatus();
-    } finally {
-      setLoading(false);
-    }
+  }
+
+  function duplicateMap() {
+    if (!activeMap) return;
+    const id = newMapId();
+    const created = { id, name: `Copy of ${activeMap.name}`, query };
+    setLibrary((prev) => ({ maps: [...prev.maps, created], activeId: id }));
+    setQuery(created.query);
+    void compile(created.query);
+  }
+
+  function deleteMap() {
+    if (library.maps.length < 2 || !activeMap) return;
+    const remaining = library.maps.filter((map) => map.id !== activeMap.id);
+    const next = remaining[0];
+    setLibrary({ maps: remaining, activeId: next.id });
+    setQuery(next.query);
+    void compile(next.query);
+  }
+
+  function renameMap(name: string) {
+    setLibrary((prev) => ({
+      ...prev,
+      maps: prev.maps.map((map) => (map.id === prev.activeId ? { ...map, name } : map)),
+    }));
   }
 
   async function onSelectFeature(feature: GeoJSON.Feature | null) {
@@ -238,13 +241,13 @@ export default function App() {
   function exportSample() {
     if (!mapData?.sample) return;
     const blob = new Blob([JSON.stringify(mapData.sample, null, 2)], { type: "application/geo+json" });
-    triggerDownload(blob, "mapi-sample.geojson");
+    triggerDownload(blob, `${mapFileSlug(activeMap?.name ?? "map")}-sample.geojson`);
   }
 
   function exportBoundary() {
     if (!mapData?.boundary?.features.length) return;
     const blob = new Blob([JSON.stringify(mapData.boundary, null, 2)], { type: "application/geo+json" });
-    triggerDownload(blob, "mapi-boundary.geojson");
+    triggerDownload(blob, `${mapFileSlug(activeMap?.name ?? "map")}-boundary.geojson`);
   }
 
   function exportPng() {
@@ -256,7 +259,7 @@ export default function App() {
       }
       const link = document.createElement("a");
       link.href = dataUrl;
-      link.download = "mapi-map.png";
+      link.download = `${mapFileSlug(activeMap?.name ?? "map")}.png`;
       link.click();
     } catch (err) {
       const message = err instanceof Error ? err.message : "PNG export failed";
@@ -300,25 +303,22 @@ export default function App() {
         query={query}
         setQuery={setQuery}
         taxonCandidates={taxonCandidates}
-        placeCandidates={placeCandidates}
         taxonNeeds={taxonNeeds}
         placeNeeds={placeNeeds}
         loading={loading}
-        nlPrompt={nlPrompt}
-        setNlPrompt={setNlPrompt}
-        nlNotes={nlNotes}
+        maps={library.maps}
+        activeMapId={library.activeId}
+        onOpenMap={openMap}
+        onNewMap={newMap}
+        onDuplicateMap={duplicateMap}
+        onDeleteMap={deleteMap}
+        onRenameMap={renameMap}
         onSuggest={(q, rankHint) => void onSuggest(q, rankHint)}
-        onResolvePlace={() => void onResolvePlace()}
         onPickTaxon={(c) => onPickTaxon(c)}
         onPickPlace={onPickPlace}
         taxonError={taxonError}
-        placeError={placeError}
-        clearLookupError={(field) => (field === "taxon" ? setTaxonError(null) : setPlaceError(null))}
+        clearLookupError={() => setTaxonError(null)}
         onMap={() => void compile()}
-        onPlan={() => void onPlan()}
-        onConfirmNl={() => void compile()}
-        hasNlDraft={Boolean(nlDraft)}
-        nlStatus={nlStatus}
       />
       <main className="stage">
         <MapView ref={mapRef} mapData={mapData} inat={inat} onSelect={(f) => void onSelectFeature(f)} />
@@ -330,6 +330,7 @@ export default function App() {
           {mapData && !mapData.blocked ? (
             <div className="card">
               <div className="count-badge">{mapData.count.toLocaleString()} records</div>
+              <div className="footer-attr">{activeMap?.name ?? "Map"}</div>
               <div className="footer-attr">
                 {mapData.mode} · {mapData.style}
                 {mapData.sampleTruncated ? " · sample truncated" : ""}
