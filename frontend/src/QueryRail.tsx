@@ -1,58 +1,54 @@
-import { FormEvent, useMemo } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import AccountCard from "./AccountCard";
 import Autocomplete from "./Autocomplete";
-import { autocompleteTaxon, suggestPlace } from "./api";
-import type { IucnCode, MapQuery, NlStatus, PlaceCandidate, TaxonCandidate } from "./types";
+import MapShelf from "./MapShelf";
+import { autocompleteTaxon, fetchCountries } from "./api";
+import type { SavedMap } from "./mapLibrary";
+import type { IucnCode, MapQuery, PlaceCandidate, TaxonCandidate } from "./types";
 import { IUCN_OPTIONS, JAGUAR_PRESET, NORTHSTAR } from "./types";
 
 type Props = {
   query: MapQuery;
   setQuery: (query: MapQuery) => void;
   taxonCandidates: TaxonCandidate[];
-  placeCandidates: PlaceCandidate[];
   taxonNeeds: boolean;
   placeNeeds: boolean;
   loading: boolean;
-  nlPrompt: string;
-  setNlPrompt: (value: string) => void;
-  nlNotes: string[];
+  maps: SavedMap[];
+  activeMapId: string;
+  onOpenMap: (id: string) => void;
+  onNewMap: () => void;
+  onDuplicateMap: () => void;
+  onDeleteMap: () => void;
+  onRenameMap: (name: string) => void;
   onSuggest: (q: string, rankHint?: string | null) => void;
-  onResolvePlace: () => void;
   onPickTaxon: (candidate: TaxonCandidate) => void;
   onPickPlace: (candidate: PlaceCandidate) => void;
   taxonError: string | null;
-  placeError: string | null;
   clearLookupError: (field: "taxon" | "place") => void;
   onMap: () => void;
-  onPlan: () => void;
-  onConfirmNl: () => void;
-  hasNlDraft: boolean;
-  nlStatus: NlStatus | null;
 };
 
 export default function QueryRail({
   query,
   setQuery,
   taxonCandidates,
-  placeCandidates,
   taxonNeeds,
   placeNeeds,
   loading,
-  nlPrompt,
-  setNlPrompt,
-  nlNotes,
+  maps,
+  activeMapId,
+  onOpenMap,
+  onNewMap,
+  onDuplicateMap,
+  onDeleteMap,
+  onRenameMap,
   onSuggest,
-  onResolvePlace,
   onPickTaxon,
   onPickPlace,
   taxonError,
-  placeError,
   clearLookupError,
   onMap,
-  onPlan,
-  onConfirmNl,
-  hasNlDraft,
-  nlStatus,
 }: Props) {
   const selectedIucn = query.conservation?.iucn ?? [];
   const resolved = useMemo(() => {
@@ -90,63 +86,50 @@ export default function QueryRail({
     if (!loading) onSuggest(query.taxon?.q ?? "", query.taxon?.rankHint);
   }
 
-  function onPlaceSubmit(event?: FormEvent) {
-    event?.preventDefault();
-    if (!loading) onResolvePlace();
+  const [countries, setCountries] = useState<PlaceCandidate[]>([]);
+  const [countriesError, setCountriesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchCountries()
+      .then((rows) => setCountries([...rows].sort((a, b) => a.title.localeCompare(b.title))))
+      .catch((err) => setCountriesError(err instanceof Error ? err.message : "Country list unavailable"));
+  }, []);
+
+  function chooseCountry(iso2: string) {
+    clearLookupError("place");
+    const country = countries.find((item) => item.iso2 === iso2);
+    if (!country) {
+      patch({ place: { q: "", iso2: null, title: null, kind: "country" } });
+      return;
+    }
+    onPickPlace(country);
   }
 
   return (
     <aside className="rail">
       <div className="brand">
         <h1>MAPI</h1>
-        <p>Species APIs, compiled into a map query — never guessed coordinates.</p>
+        <p>Build each map from the menus. Coordinates come from GBIF, never from a model.</p>
       </div>
+
+      <MapShelf
+        maps={maps}
+        activeId={activeMapId}
+        onOpen={onOpenMap}
+        onNew={onNewMap}
+        onDuplicate={onDuplicateMap}
+        onDelete={onDeleteMap}
+        onRename={onRenameMap}
+      />
 
       <AccountCard />
 
       <section className="card">
-        <h2>Natural language</h2>
-        {nlStatus ? (
-          <div className={nlStatus.available ? "ok" : "empty"}>
-            {nlStatus.available
-              ? `${nlStatus.provider} · ${nlStatus.model}`
-              : nlStatus.message || "Planner unavailable"}
-          </div>
-        ) : null}
-        <textarea
-          value={nlPrompt}
-          onChange={(e) => setNlPrompt(e.target.value)}
-          placeholder="show endangered amphibians in Costa Rica since 2015"
-        />
-        <div className="actions">
-          <button
-            type="button"
-            className={`secondary${loading ? " loading" : ""}`}
-            onClick={onPlan}
-            disabled={loading}
-            aria-busy={loading}
-            title={nlStatus && !nlStatus.available ? nlStatus.message ?? "Planner unavailable" : "Turn the sentence into a MapQuery"}
-          >
-            {loading ? "Planning…" : "Plan query"}
-          </button>
-          <button
-            type="button"
-            className={`primary${loading ? " loading" : ""}`}
-            onClick={onConfirmNl}
-            disabled={!hasNlDraft || loading}
-            title={!hasNlDraft ? "Run Plan query first" : "Confirm this query and draw the map"}
-          >
-            {hasNlDraft ? "Confirm & map" : "Plan query first"}
-          </button>
-        </div>
-        {!hasNlDraft && !loading ? (
-          <div className="footer-attr">First plan the sentence with the configured LLM, then review and confirm the resolved query.</div>
-        ) : null}
-        {nlNotes.map((note) => (
-          <div className="empty" key={note}>
-            {note}
-          </div>
-        ))}
+        <h2>Connections</h2>
+        <div className="footer-attr">GBIF supplies the taxon, the country list, occurrence tiles, and the sample.</div>
+        <div className="footer-attr">geoBoundaries draws the country outline.</div>
+        <div className="footer-attr">IUCN categories filter through GBIF. A species click asks the Red List for the card.</div>
+        <div className="footer-attr">iNaturalist is optional and adds research-grade photo points.</div>
       </section>
 
       <section className="card">
@@ -238,54 +221,25 @@ export default function QueryRail({
         ) : null}
       </form>
 
-      <form className="card" onSubmit={onPlaceSubmit}>
+      <section className="card">
         <h2>Place</h2>
         <label className="field">
           Country
-          <Autocomplete<PlaceCandidate>
-            value={query.place?.q ?? ""}
-            onChange={(q) => {
-              clearLookupError("place");
-              patch({ place: { q, iso2: null, title: null, kind: "country" } });
-            }}
-            fetchOptions={async (q, signal) => (await suggestPlace(q, signal)).candidates}
-            describe={(c) => ({ label: c.title, detail: [c.iso2, c.iso3].filter(Boolean).join(" · ") })}
-            getKey={(c) => c.iso2}
-            onPick={onPickPlace}
-            onEnter={() => onPlaceSubmit()}
-            placeholder="Costa Rica"
-            emptyHint="No country matches this text."
-            minChars={1}
-            invalid={Boolean(placeError)}
-            describedBy={placeError ? "place-error" : undefined}
-          />
-        </label>
-        <button type="submit" className="secondary" disabled={loading}>
-          Resolve place
-        </button>
-        {placeError ? (
-          <div className="warn" id="place-error" role="alert">
-            {placeError}
-          </div>
-        ) : null}
-        {placeNeeds ? <div className="warn">Pick a country match.</div> : null}
-        {placeCandidates.length > 0 ? (
-          <ul className="candidates">
-            {placeCandidates.slice(0, 8).map((c) => (
-              <li key={c.iso2}>
-                <button
-                  type="button"
-                  className={c.iso2 === query.place?.iso2 ? "selected" : ""}
-                  onClick={() => onPickPlace(c)}
-                >
-                  {c.title}
-                  <small>{c.iso2}</small>
-                </button>
-              </li>
+          <select value={query.place?.iso2 ?? ""} onChange={(event) => chooseCountry(event.target.value)} disabled={!countries.length}>
+            <option value="">{countries.length ? "Choose a country" : "Loading countries…"}</option>
+            {query.place?.iso2 && !countries.some((country) => country.iso2 === query.place?.iso2) ? (
+              <option value={query.place.iso2}>{query.place.title || query.place.q || query.place.iso2}</option>
+            ) : null}
+            {countries.map((country) => (
+              <option key={country.iso2} value={country.iso2}>
+                {country.title}
+              </option>
             ))}
-          </ul>
-        ) : null}
-      </form>
+          </select>
+        </label>
+        {countriesError ? <div className="warn">{countriesError}</div> : null}
+        {placeNeeds ? <div className="warn">Pick a country from the list.</div> : null}
+      </section>
 
       <section className="card">
         <h2>Time</h2>
@@ -329,18 +283,17 @@ export default function QueryRail({
 
       <section className="card">
         <h2>Map style</h2>
-        <div className="chips">
-          {(["points", "hex", "heat"] as const).map((style) => (
-            <button
-              key={style}
-              type="button"
-              className={query.map?.style === style ? "chip active" : "chip ghost"}
-              onClick={() => patch({ map: { style } })}
-            >
-              {style}
-            </button>
-          ))}
-        </div>
+        <label className="field">
+          Drawing
+          <select
+            value={query.map?.style ?? "points"}
+            onChange={(event) => patch({ map: { style: event.target.value as "points" | "hex" | "heat" } })}
+          >
+            <option value="points">Points</option>
+            <option value="hex">Hexagons</option>
+            <option value="heat">Heat</option>
+          </select>
+        </label>
         <label className="field">
           <span>
             <input
